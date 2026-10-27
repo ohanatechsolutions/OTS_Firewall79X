@@ -32,6 +32,11 @@ jobs:
         if: always()
         with:
           name: OTS-Firewall79X-Windows-x64
-          path: artifacts/
+          path: |
+            artifacts/release/
+            artifacts/*test-results.json
+            artifacts/windows-observed-status.json
+            artifacts/vulnerability-report.json
+            artifacts/*.log
           if-no-files-found: error
           retention-days: 30
