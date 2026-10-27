@@ -12,7 +12,7 @@ The current preview is unsigned. Its build/install verification status is docume
 
 ## Implemented behavior
 
-- Native WPF dashboard, full numbered layer catalog, event history, per-process TCP table, reports, optional user-session tools, and separate recovery executable.
+- Native WPF dashboard, full numbered layer catalog, event history, rate-limited desktop alerts, per-process TCP table, reports, optional user-session tools, and separate recovery executable.
 - Windows service with local ACL-protected named pipes; mutation requires an elevated administrator token. The GUI itself is not elevated.
 - Existing Windows Firewall policy inspection and exact-match conflict analysis. Firewall rules and profile defaults are not overwritten.
 - Reversible AutoRun hardening using a durable intent journal and compare-before-restore semantics.

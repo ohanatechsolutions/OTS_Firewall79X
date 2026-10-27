@@ -8,7 +8,7 @@ Windows event coverage depends on existing channel/audit settings. A subscriptio
 
 Safe hardening is limited to AutoRun. OTS does not replace firewall policy or disable Defender. No new network-blocking rules are installed. The blocked counter does not count Windows blocks as OTS blocks. ON cannot make unavailable capabilities operational. Main dashboard remains Partially Protected.
 
-User-session monitoring is opt-in and stops when the GUI closes; settings are currently per-session. Camera/microphone registry observations are incomplete. Browser audit inventories only default Chrome/Edge extension directories. Download scanning uses installed Microsoft Defender and does not request remediation. Its process exit code is not advertised as an independent malware verdict.
+Desktop balloon alerts require the running GUI and can be suppressed by Windows notification policy. User-session monitoring is opt-in and stops when the GUI closes; settings are currently per-session. Camera/microphone registry observations are incomplete. Browser audit inventories only default Chrome/Edge extension directories. Download scanning uses installed Microsoft Defender and does not request remediation. Its process exit code is not advertised as an independent malware verdict.
 
 Logging is bounded and HMAC-chained, but end-to-end segment verification and durable event counters are incomplete. Counters reset at service startup. Local administrators remain trusted. Resource governor uses budgets, battery intervals, cached heavy inventories, and service CPU/memory backoff; adaptive disk scheduling is incomplete. Layer elapsed times are real; per-layer memory is not fabricated.
 

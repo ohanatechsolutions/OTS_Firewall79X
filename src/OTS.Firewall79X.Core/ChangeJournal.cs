@@ -10,12 +10,15 @@ public sealed class ChangeJournal
     public ChangeJournal(string path, ISettingStore store)
     {
         this.path=path; this.store=store;
+        if(File.Exists(path)&&new FileInfo(path).Length>1024*1024)throw new InvalidDataException("Journal file exceeds size budget");
         entries = File.Exists(path) ? JsonSerializer.Deserialize<List<Change>>(File.ReadAllText(path), Wire.Json) ?? throw new InvalidDataException("Invalid journal") : [];
-        if(entries.Count>1024) throw new InvalidDataException("Journal exceeds limit");
+        if(entries.Count>1024||entries.Any(e=>string.IsNullOrEmpty(e.Key)||e.Key.Length>256||e.State is not ("prepared" or "applied" or "restored" or "conflict-preserved")))throw new InvalidDataException("Journal exceeds limits or contains invalid states");
     }
     public IReadOnlyList<Change> Entries => entries;
     public void Apply(string key, string? value)
     {
+        if(string.IsNullOrEmpty(key)||key.Length>256||value?.Length>4096)throw new ArgumentException("Setting exceeds limits");
+        if(entries.Count(e=>e.State is "prepared" or "applied")>=768)throw new InvalidOperationException("Active transaction budget exceeded");
         if(entries.Any(e=>e.Key==key && e.State is "prepared" or "applied")) throw new InvalidOperationException("Setting already owned");
         var before=store.Read(key); if(before==value)return;
         entries.Add(new(key,before,value,"prepared")); Save(); // durable intent before system mutation
@@ -37,7 +40,12 @@ public sealed class ChangeJournal
         }
         return conflicts;
     }
-    private void Save()=>AtomicFile.Write(path,JsonSerializer.Serialize(entries,Wire.Json));
+    private void Save()
+    {
+        int cutoff=entries.Count-256;
+        entries=entries.Where((e,index)=>index>=cutoff||e.State is "prepared" or "applied").ToList();
+        AtomicFile.Write(path,JsonSerializer.Serialize(entries,Wire.Json));
+    }
 }
 public static class AtomicFile
 {

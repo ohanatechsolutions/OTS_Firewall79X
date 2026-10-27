@@ -14,11 +14,12 @@ namespace OTS.Firewall79X.App;
 public partial class MainWindow : Window
 {
     private sealed record Row(int Id,string Name,string Category,string Mode,string Health,string Evidence,double? Duration);
+    private DesktopNotifications? notifications;private DateTimeOffset lastAlert=DateTimeOffset.UtcNow,lastNotification=DateTimeOffset.MinValue;
     private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private readonly DispatcherTimer timer;private bool ready;
     private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
     public MainWindow()
     {
-        InitializeComponent();ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>await Refresh();Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();};
+        InitializeComponent();ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};
     }
     private async Task Refresh()
     {
@@ -42,8 +43,15 @@ public partial class MainWindow : Window
             FeedText.Text=dashboard.FeedStatus;
             var unavailable=dashboard.Layers.Count(l=>l.Mode==LayerMode.Unavailable);HealthSummary.Text=$"{unavailable} unavailable layers. Review each layer’s evidence and limitations. A healthy audit does not mean a complete protection mechanism.";
             SystemHealthText.Text=$"Service responded at {DateTimeOffset.Now:g}. "+(dashboard.ResumeAt.HasValue?$"Automatic resume: {dashboard.ResumeAt.Value.ToLocalTime():g}":"");
+            if(notifications!=null&&!notifications.Ready)SystemHealthText.Text+=" Desktop notification registration is unavailable; use Threat Activity for alerts.";
             rows=dashboard.Layers.Select(l=>{var def=Catalog.All.Single(d=>d.Id==l.Id);return new Row(l.Id,def.Name,def.Category,l.Mode.ToString(),l.Healthy?"Operational":"Attention / idle",l.Evidence+(l.Limitation.Length>0?" — "+l.Limitation:""),l.DurationMs);}).ToList();Filter();
             EventGrid.ItemsSource=dashboard.Events;NetworkGrid.ItemsSource=dashboard.Connections;
+            var high=dashboard.Events.Where(e=>e.Severity=="High"&&e.Time>lastAlert).OrderByDescending(e=>e.Time).FirstOrDefault();
+            if(high!=null)
+            {
+                lastAlert=high.Time;
+                if(DateTimeOffset.UtcNow-lastNotification>TimeSpan.FromMinutes(2)){notifications?.Show("OTS Firewall79X security alert",high.Kind+". Open Threat Activity for details.");lastNotification=DateTimeOffset.UtcNow;}
+            }
             StatusLine.Text=stale?"Service has not completed a recent health cycle. Do not rely on the displayed score.":"Connected to local service. Administrator approval is requested only for protected operations.";
         }
         catch(Exception ex){ProtectionText.Text="Service unavailable — protection status unknown";ScoreText.Text="Unknown";StatusLine.Text=ex.Message+". Use Recovery if the service cannot start.";}
