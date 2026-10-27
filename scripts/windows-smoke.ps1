@@ -51,6 +51,13 @@ Check 'Later independent changes are preserved on OFF' {
   if($null -eq $oldAutorun){Remove-ItemProperty $policyPath -Name NoDriveTypeAutoRun}else{Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value $oldAutorun -Type DWord}
 }
 Check 'Existing firewall rules preserved' { if ((FirewallDigest) -ne $before) { throw 'Firewall rules changed' } }
+Check 'Client rejects an impostor named-pipe server' {
+  Stop-Service OTSFirewall79X
+  try {
+    dotnet tests/OTS.Firewall79X.WindowsTests/bin/Release/net10.0-windows/OTS.Firewall79X.WindowsTests.dll --impostor
+    if($LASTEXITCODE -ne 0){throw 'Named-pipe server identity probe failed'}
+  } finally { Start-Service OTSFirewall79X }
+}
 Check 'In-place upgrade preserves recoverability' { RunExe $setup '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=artifacts/upgrade.log';RunExe $helper '--on --quiet';RunExe $helper '--off --quiet' }
 Check 'Clean uninstall removes service and application' { RunExe "$root\unins000.exe" '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART';if(Get-Service OTSFirewall79X -ErrorAction SilentlyContinue){throw 'Service remains'};if(Test-Path "$root\OTS Firewall79X.exe"){throw 'Application remains'} }
 Check 'Firewall rules preserved after uninstall' { if ((FirewallDigest) -ne $before) { throw 'Firewall rules changed during uninstall' } }

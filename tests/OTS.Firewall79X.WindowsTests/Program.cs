@@ -8,6 +8,17 @@ if(!OperatingSystem.IsWindows())return 2;
 bool admin=new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 try
 {
+    if(args.Contains("--impostor"))
+    {
+        if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")throw new Exception("Impostor probe is restricted to disposable CI");
+        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var fake=new NamedPipeServerStream(Ipc.PipeName,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous);
+        var connect=fake.WaitForConnectionAsync(timeout.Token);
+        var client=Ipc.SendAsync("status",timeout.Token);
+        await connect;
+        try{await client;throw new Exception("Client accepted an endpoint not owned by the registered service");}
+        catch(UnauthorizedAccessException){return 0;}
+    }
     var status=await Ipc.SendAsync("status");if(!status.Ok||status.Dashboard?.Layers.Count!=79)throw new Exception("Status/catalog unavailable");
     if(args.Contains("--unprivileged"))
     {
