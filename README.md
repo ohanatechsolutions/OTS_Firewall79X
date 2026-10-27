@@ -18,7 +18,7 @@ The current preview is unsigned. Its build/install verification status is docume
 - Reversible AutoRun hardening using a durable intent journal and compare-before-restore semantics.
 - Event Log subscriptions, services/drivers/accounts/USB inventory, connection and ARP baselines, narrow detection heuristics, and loopback-only canaries.
 - Optional current-user filesystem, camera/microphone registry, clipboard-address, browser-extension inventory, and native Defender scan requests.
-- Selected-folder secret-indicator scan, optional Pwned Passwords range check, reports, authenticated encrypted report archives.
+- Selected-folder secret-indicator scan, optional Pwned Passwords range check, reports, authenticated encrypted report archives, and versioned selected-folder backups with verified non-overwriting restore.
 
 ## System requirements
 

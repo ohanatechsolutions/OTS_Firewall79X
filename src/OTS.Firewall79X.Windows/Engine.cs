@@ -11,6 +11,8 @@ public sealed class Engine : IDisposable
     private EventSensors? sensors;private DeceptionMonitor? deception;private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
+    private readonly Dictionary<int,LayerResult> inventoryCache=[];
+    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,39,44,51,52];
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));
@@ -54,7 +56,7 @@ public sealed class Engine : IDisposable
         try
         {
             journal.Apply(WindowsSettings.AutoRun,"255");sensors=new(events);sensors.Start();checks.Sensors=sensors;deception=new(events);
-            enabled=true;epoch++;resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
+            enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
             events.Add(47,"Info","Protection activated","Narrow AutoRun hardening applied with rollback; system firewall policy preserved");
         }
@@ -79,6 +81,8 @@ public sealed class Engine : IDisposable
                 bool active;lock(gate)active=enabled;
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
                 var interval=TimeSpan.FromSeconds(battery?90:30);
+                // Back off after observed high service CPU/memory without inventing per-layer attribution.
+                if((cached.CpuPercent??0)>10||cached.ServiceMemoryMb>256)interval=TimeSpan.FromSeconds(battery?180:60);
                 if(active&&DateTimeOffset.UtcNow-lastCycle>=interval)
                 {
                     // Serialize lifecycle and collection. Bounded individual sensors limit expensive work;
@@ -97,9 +101,16 @@ public sealed class Engine : IDisposable
             checks.Prepare();List<LayerResult> results=[];
             foreach(var definition in Catalog.All)
             {
+                lock(gate)
+                {
+                    if(!enabled||epoch!=version)return;
+                    if(InventoryLayers.Contains(definition.Id)&&inventoryCache.TryGetValue(definition.Id,out var previous)&&previous.CheckedAt is DateTimeOffset observed&&DateTimeOffset.UtcNow-observed<TimeSpan.FromMinutes(battery?15:5))
+                    {results.Add(previous);continue;}
+                }
                 var timer=Stopwatch.StartNew();LayerResult r;
                 try{LayerResult? infra;lock(gate){if(!enabled||epoch!=version)return;infra=Infrastructure(definition.Id,battery);}r=infra??checks.Check(definition.Id);}catch(Exception ex){r=new(definition.Id,LayerMode.Unavailable,false,Wire.Clean(ex.Message));events.Add(definition.Id,"Warning","Layer check failed",ex.Message);}
-                results.Add(r with{CheckedAt=DateTimeOffset.UtcNow,DurationMs=Math.Round(timer.Elapsed.TotalMilliseconds,2)});
+                r=r with{CheckedAt=DateTimeOffset.UtcNow,DurationMs=Math.Round(timer.Elapsed.TotalMilliseconds,2)};
+                results.Add(r);if(InventoryLayers.Contains(definition.Id))lock(gate){if(epoch==version)inventoryCache[definition.Id]=r;}
             }
             using var process=Process.GetCurrentProcess();var now=DateTimeOffset.UtcNow;double cpu=(process.TotalProcessorTime-lastCpu).TotalSeconds/Math.Max((now-lastCpuAt).TotalSeconds,1)/Environment.ProcessorCount*100;lastCpu=process.TotalProcessorTime;lastCpuAt=now;
             var score=Posture.Calculate(results,true);
@@ -134,12 +145,12 @@ public sealed class Engine : IDisposable
                 return intact?Good($"{active.Length} journaled settings still match OTS-applied values",LayerMode.Monitoring):new(id,LayerMode.Auditing,false,"An owned setting changed externally; it will be preserved on restore");
             case 60:return Good("Severity-labelled, deduplicated event history connected to dashboard",limit:"Desktop notifications require the running interactive application; external messaging is not configured.");
             case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging degraded: "+events.LastError,"Recent events remain in bounded memory only until storage is repaired.");return Good("Bounded JSONL logs with gzip rotation and HMAC chaining",limit:"Up to 20 compressed segments plus active 2 MB segment. Counters are since service start. Administrator can tamper; cross-boot chain verification is incomplete.");
-            case 62:return Good(battery?"Battery mode: 90-second sampling interval":"AC mode: 30-second sampling interval",limit:"Bounded tables and serial audits; adaptive CPU/disk throttling is incomplete. Per-layer elapsed time is measured, not attributed memory.");
+            case 62:return Good(battery?"Battery mode: 90-second normal telemetry, 15-minute heavy inventory":"AC mode: 30-second normal telemetry, 5-minute heavy inventory",limit:"Backoff follows measured service CPU/memory pressure. Bounded tables and serial audits; adaptive disk scheduling remains incomplete. Cached samples retain their true observation time.");
             case 63:return new(id,LayerMode.Unavailable,false,"No configured threat feeds; freshness cannot be established");
             case 64:return Good("Log-integrity key is encrypted by machine DPAPI in administrator/SYSTEM-only storage",LayerMode.Enforcing,"Local administrators remain trusted; DPAPI is not off-device protection.");
             case 66:return Good("High-severity events request a protected JSON snapshot on the next completed health cycle",LayerMode.Monitoring,"Preserves available layer health, recent events and process-associated TCP metadata; bounded to 10 snapshots. No full memory dump or guaranteed capture after abrupt power loss.");
             case 67:return Good("Weighted capability-health score; unavailable/idle layers receive zero; not-applicable layers excluded",LayerMode.Auditing,"Score measures declared checks, not immunity or independently measured security effectiveness.");
-            case 68:return new(id,LayerMode.Idle,false,"Desktop supports authenticated encrypted configuration/report archives","General user-file backups and independent backup destinations require user selection and are incomplete.");
+            case 68:return new(id,LayerMode.Idle,false,"Desktop supports verified encrypted, versioned selected-folder backups and report archives","User selection required; 5,000-file/60 MiB limit; no empty-directory, symlink, ACL or full-system image preservation. Same-machine backups are not independent protection.");
             case 69:return Good("Separate UAC recovery executable and bundled offline recovery instructions",LayerMode.Auditing,"Not bootable recovery media; WinRE/boot media creation requires additional integration.");
             case 70:return new(id,LayerMode.Idle,false,"Local bounded log archives; encrypted desktop report export available","Off-device shipping is not configured or implemented.");
             case 71:return new(id,LayerMode.Idle,false,"Build-time regression suite; installed catalog/journal self-check available","Automatic post-update behavioral regression suite is not implemented.");

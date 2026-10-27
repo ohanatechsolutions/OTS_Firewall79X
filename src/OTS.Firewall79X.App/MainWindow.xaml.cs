@@ -128,4 +128,21 @@ public partial class MainWindow : Window
         var open=new OpenFileDialog{Filter="Encrypted OTS archive|*.otsbackup"};if(open.ShowDialog()!=true)return;
         try{var plain=SecureArchive.Decrypt(open.FileName,ArchivePassword.Password);var save=new SaveFileDialog{Filter="Restored report|*.md",FileName="OTS-Restored-Report.md"};if(save.ShowDialog()==true)File.WriteAllBytes(save.FileName,plain);CryptographicOperations.ZeroMemory(plain);StatusLine.Text="Archive authenticated and restored to your chosen file.";}catch(Exception ex){MessageBox.Show("Archive restore failed: "+ex.Message);}finally{ArchivePassword.Clear();}
     }
+    private async void FolderBackupClick(object sender,RoutedEventArgs e)
+    {
+        var folder=new OpenFolderDialog{Title="Select the folder to encrypt (60 MiB maximum)"};if(folder.ShowDialog()!=true)return;
+        var save=new SaveFileDialog{Filter="Encrypted folder backup|*.otsfolder",FileName=$"OTS-Folder-{DateTime.Now:yyyyMMdd-HHmmss}.otsfolder",OverwritePrompt=true};if(save.ShowDialog()!=true)return;
+        var password=ArchivePassword.Password;ArchivePassword.Clear();
+        try{StatusLine.Text="Encrypting selected files and verifying every file hash…";var summary=await Task.Run(()=>FolderBackup.Create(folder.FolderName,save.FileName,password));StatusLine.Text=$"Verified backup saved: {summary.Files} files, {summary.Bytes:N0} bytes. Keep the passphrase safe.";}
+        catch(Exception ex){MessageBox.Show(ex.Message,"Backup failed",MessageBoxButton.OK,MessageBoxImage.Warning);}
+    }
+    private async void FolderRestoreClick(object sender,RoutedEventArgs e)
+    {
+        var open=new OpenFileDialog{Filter="Encrypted folder backup|*.otsfolder"};if(open.ShowDialog()!=true)return;
+        var folder=new OpenFolderDialog{Title="Choose a parent folder; restored files go into a new subfolder"};if(folder.ShowDialog()!=true)return;
+        var target=Path.Combine(folder.FolderName,$"OTS-Restored-{DateTime.Now:yyyyMMdd-HHmmss}");var password=ArchivePassword.Password;ArchivePassword.Clear();
+        try{var summary=await Task.Run(()=>FolderBackup.Restore(open.FileName,target,password));StatusLine.Text=$"Restored and verified {summary.Files} files in {target}";}
+        catch(Exception ex){MessageBox.Show(ex.Message,"Restore failed",MessageBoxButton.OK,MessageBoxImage.Warning);}
+    }
+
 }
