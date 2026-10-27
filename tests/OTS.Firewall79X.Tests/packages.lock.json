@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "ots.firewall79x.core": {
+        "type": "Project"
+      }
+    }
+  }
+}

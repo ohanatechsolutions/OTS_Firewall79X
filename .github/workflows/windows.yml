@@ -1,0 +1,37 @@
+name: Windows build and installation verification
+on:
+  push:
+    branches: [main, build/windows-security-stack]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '10.0.403'
+      - name: Build, test, and compile installer
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Install, exercise, upgrade, and uninstall
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1
+      - name: Dependency vulnerability inventory
+        if: always()
+        shell: pwsh
+        run: dotnet list OTS.Firewall79X.sln package --vulnerable --include-transitive --format json | Out-File artifacts/vulnerability-report.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: OTS-Firewall79X-Windows-x64
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30

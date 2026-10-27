@@ -1,0 +1,7 @@
+OTS Firewall79X 0.1.0 — INCOMPLETE DEVELOPMENT PREVIEW
+
+This is not the completed 79-layer security product. Many layers provide partial monitoring/auditing, and several required capabilities are unavailable. Existing Windows Firewall and Microsoft Defender remain independently responsible for their protections.
+
+This unsigned installer bundles the runtime, native desktop app, service, and recovery tool. ON applies a reversible AutoRun policy and starts available collectors. OFF restores only settings that still match OTS-applied values. No automatic network blocks or trusted software updater are included.
+
+Review the Security Layers tab and bundled known limitations before relying on any capability.
