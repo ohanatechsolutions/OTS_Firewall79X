@@ -1,9 +1,14 @@
 # Test status
 
-Core regressions: **PASS — 28/28 executed** in the Linux build environment using .NET SDK 10.0.403. Includes interrupted journal writes/recovery, external-change preservation, framing corpus, authenticated archive tamper tests, score behavior, heuristics, and report accountability. Exact machine-readable results are emitted by the test executable.
+## Executed evidence
 
-Windows backend compilation: PASS in cross-targeted build. Full desktop/service/recovery compilation and Windows installer tests are still being run; consult CI for the artifact's exact commit.
+- **PASS:** all application, service, recovery, core and Windows adapter projects compile using .NET SDK 10.0.403; latest local build has zero warnings/errors.
+- **PASS:** 28/28 core regression checks, including 1,000 malformed framing samples, durable interrupted transactions, preservation of external changes, detection heuristics, coverage reports, and AES-GCM archive authentication/tamper tests.
+- **PASS:** first Windows Server 2025 CI build at commit `e076dc3e9a541333ddde8a54866a8120b7d34922`: real application/recovery PE executables and installer compiled; clean install; UI launch; activation; local self-check; pause/resume; OFF/restore; firewall-rule preservation; upgrade; clean uninstall and post-uninstall rule preservation. [Run logs](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/40506910435).
+- **PASS:** all 15 Windows integration checks at commit `a24a756081e9f61d08e5e1d0b55a459c609b5496`, including standard-user rejection of privileged commands, malformed IPC, real telemetry, original AutoRun restoration, and preservation of later independent changes. [Run logs](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/40507817244). A prior pass does not verify later source changes.
 
-Windows 10/11 physical-device, Bluetooth/Wi-Fi/TPM/USB hardware, reboot persistence, standard-user IPC rejection, full chaos/interruption, trusted signing/update, complete 79-layer integration and performance benchmark tests: **NOT RUN** or **BLOCKED by unavailable target hardware/signing identity**, as applicable. These are not treated as passing.
+## Not established
 
-The workflow writes actual core-test-results.json, windows-test-results.json, vulnerability-report.json, installer logs, build manifest and package hashes. A workflow definition is not evidence of execution.
+Windows 10/11 physical-device compatibility, WLAN/Bluetooth/TPM/USB hardware behavior, reboot persistence, full installer interruption/chaos tests, trusted code signing/automatic updates, complete 79-layer integration, and target-laptop resource benchmarks are **NOT RUN** or **BLOCKED by unavailable target hardware/signing identity**, as applicable. No hardware behavior or full acceptance gate is reported passing without evidence.
+
+The workflow emits core-test-results.json, windows-test-results.json, windows-observed-status.json, vulnerability-report.json, installer logs, BUILD_MANIFEST.json and SHA256SUMS.txt. The finalized release ZIP includes its actual executed test results. High/critical dependency findings prevent finalization. Checksums do not establish a trusted publisher identity.

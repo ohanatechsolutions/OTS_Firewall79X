@@ -35,6 +35,8 @@ public sealed class EventStore
     private readonly Dictionary<string,DateTimeOffset> last=[];
     private readonly string directory; private readonly byte[] key; private string chain="";
     public long Total {get;private set;} public long Blocked {get;private set;}
+    public string? LastError {get;private set;} private int snapshotRequested;
+    public bool ConsumeSnapshotRequest()=>Interlocked.Exchange(ref snapshotRequested,0)==1;
     public EventStore(string directory)
     {
         this.directory=directory; Paths.SecureDirectory(directory);
@@ -53,6 +55,10 @@ public sealed class EventStore
             if(last.TryGetValue(id,out var time)&&now-time<TimeSpan.FromMinutes(2))return;
             if(last.Count>4000)last.Clear(); last[id]=now;
             var e=new SecurityEvent(now,layer,severity,kind,detail,blocked);
+            if(severity=="High")Interlocked.Exchange(ref snapshotRequested,1);
+            Total++;if(blocked)Blocked++;recent.Enqueue(e);while(recent.Count>300)recent.Dequeue();
+            try
+            {
             var data=JsonSerializer.Serialize(e,Wire.Json);
             var previous=chain;chain=Convert.ToHexString(HMACSHA256.HashData(key,Encoding.UTF8.GetBytes(previous+data)));
             var path=Path.Combine(directory,"events.jsonl");
@@ -64,7 +70,8 @@ public sealed class EventStore
                 foreach(var old in Directory.GetFiles(directory,"*.gz").OrderByDescending(File.GetLastWriteTimeUtc).Skip(20))File.Delete(old);
             }
             File.AppendAllText(path,JsonSerializer.Serialize(new {Previous=previous,Data=data,Hmac=chain},Wire.Json)+"\n");
-            Total++;if(blocked)Blocked++;recent.Enqueue(e);while(recent.Count>300)recent.Dequeue();
+            }
+            catch(Exception ex)when(ex is IOException or UnauthorizedAccessException){LastError=Wire.Clean(ex.Message);}
         }
     }
 }

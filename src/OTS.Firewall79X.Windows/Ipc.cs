@@ -11,7 +11,7 @@ public static class Ipc
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(20));
         using var pipe=new NamedPipeClientStream(".",PipeName,PipeDirection.InOut,PipeOptions.Asynchronous,TokenImpersonationLevel.Impersonation);
-        await pipe.ConnectAsync(timeout.Token);await Wire.WriteAsync(pipe,new Request(command),timeout.Token);
+        await pipe.ConnectAsync(timeout.Token);PipeServerIdentity.Verify(pipe.SafePipeHandle);await Wire.WriteAsync(pipe,new Request(command),timeout.Token);
         return await Wire.ReadAsync<Response>(pipe,4*1024*1024,timeout.Token);
     }
     public static async Task ServeAsync(Func<Request,Response> handle,Action<Exception> error,CancellationToken ct)

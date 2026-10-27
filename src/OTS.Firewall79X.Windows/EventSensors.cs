@@ -9,7 +9,7 @@ public sealed class EventSensors : IDisposable
     private readonly List<EventLogWatcher> watchers=[];private readonly EventStore events;
     private readonly object sync=new();private readonly Dictionary<string,Queue<(DateTimeOffset Time,int Port)>> attempts=[];
     private readonly Dictionary<string,Queue<DateTimeOffset>> failures=[];
-    public Dictionary<string,string> Health {get;}=[];
+    public System.Collections.Concurrent.ConcurrentDictionary<string,string> Health {get;}=new();
     public EventSensors(EventStore events){this.events=events;}
     public void Start()
     {
