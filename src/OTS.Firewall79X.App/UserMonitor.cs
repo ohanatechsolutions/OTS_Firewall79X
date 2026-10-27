@@ -12,7 +12,7 @@ internal sealed class UserMonitor : IDisposable
 {
     private readonly List<FileSystemWatcher> watchers=[];private readonly Queue<DateTimeOffset> changes=[];private readonly Queue<SecurityEvent> events=[];private readonly Dictionary<string,string> baseline=[];
     private readonly Channel<string> scans=Channel.CreateBounded<string>(new BoundedChannelOptions(64){FullMode=BoundedChannelFullMode.Wait,SingleReader=true});private readonly CancellationTokenSource stop=new();
-    private readonly DispatcherTimer timer;private readonly object gate=new();private string? lastAddressHash;private DateTimeOffset addressAt;private string? defender;private int scansCompleted;private string scanHealth="Starting";
+    private readonly DispatcherTimer timer;private readonly object gate=new();private string? lastAddressHash;private DateTimeOffset addressAt;private string? defender;private int scansCompleted;private bool scanVerified;private string scanHealth="No scan run yet; scanner capability is unverified";
     public bool Active {get;private set;}
     public UserMonitor()
     {
@@ -35,7 +35,7 @@ internal sealed class UserMonitor : IDisposable
     public List<LayerResult> Results()
     {
         var now=DateTimeOffset.UtcNow;
-        return [new(28,LayerMode.Monitoring,Active,"Observes current-user camera/microphone ConsentStore timestamps","Privacy registry telemetry is incomplete and can lag; absence of an event is not proof of no device use.",now),new(32,LayerMode.Monitoring,Active,"Detects rapid changes between address-like clipboard strings","Address-format heuristic only; no attribution to a malicious process. Clipboard is never logged.",now),new(48,LayerMode.Auditing,Active,"Observes Chromium-family extension directories","Change inventory only; does not determine extension trust or all browser security settings.",now),new(76,defender!=null?LayerMode.Monitoring:LayerMode.Unavailable,defender!=null,$"Downloads scan requests completed: {scansCompleted}; {scanHealth}","Microsoft Defender must be installed and usable. Scan completion does not independently establish a detection verdict; see Protection History.",now),new(78,LayerMode.Monitoring,Active,"Documents/Downloads mass-change heuristic and named canary modification alerts","May miss read access, rapid events on buffer overflow, and changes outside watched folders. No automatic process termination.",now)];
+        return [new(28,LayerMode.Monitoring,Active,"Observes current-user camera/microphone ConsentStore timestamps","Privacy registry telemetry is incomplete and can lag; absence of an event is not proof of no device use.",now),new(32,LayerMode.Monitoring,Active,"Detects rapid changes between address-like clipboard strings","Address-format heuristic only; no attribution to a malicious process. Clipboard is never logged.",now),new(48,LayerMode.Auditing,Active,"Observes Chromium-family extension directories","Change inventory only; does not determine extension trust or all browser security settings.",now),new(76,defender!=null?LayerMode.Monitoring:LayerMode.Unavailable,defender!=null&&scanVerified,$"Downloads scan requests completed: {scansCompleted}; {scanHealth}","Microsoft Defender must be installed and usable. Scan completion does not independently establish a detection verdict; see Protection History.",now),new(78,LayerMode.Monitoring,Active,"Documents/Downloads mass-change heuristic and named canary modification alerts","May miss read access, rapid events on buffer overflow, and changes outside watched folders. No automatic process termination.",now)];
     }
     private void Watch(string dir,bool download)
     {
@@ -66,10 +66,10 @@ internal sealed class UserMonitor : IDisposable
                     var start=new ProcessStartInfo(defender){UseShellExecute=false,CreateNoWindow=true};foreach(var arg in new[]{"-Scan","-ScanType","3","-File",path,"-DisableRemediation"})start.ArgumentList.Add(arg);
                     using var p=Process.Start(start)??throw new IOException("Unable to start Defender scanner");using var timeout=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);timeout.CancelAfter(TimeSpan.FromMinutes(2));
                     try{await p.WaitForExitAsync(timeout.Token);}catch(OperationCanceledException){p.Kill(true);throw;}
-                    scansCompleted++;scanHealth=$"Last native scanner exit: {p.ExitCode}";Add(76,p.ExitCode==0?"Info":"Warning","Defender scan completed",$"{Path.GetFileName(path)}; exit {p.ExitCode}. Consult Windows Security for verdict.");
+                    scansCompleted++;scanVerified=p.ExitCode==0;scanHealth=$"Last native scanner exit: {p.ExitCode}";Add(76,p.ExitCode==0?"Info":"Warning","Defender scan completed",$"{Path.GetFileName(path)}; exit {p.ExitCode}. Consult Windows Security for verdict.");
                 }
                 catch(OperationCanceledException)when(stop.IsCancellationRequested){break;}
-                catch(Exception ex){scanHealth=ex.Message;Add(76,"Warning","File scan failed",ex.Message);}
+                catch(Exception ex){scanVerified=false;scanHealth=ex.Message;Add(76,"Warning","File scan failed",ex.Message);}
             }
         }
         catch(OperationCanceledException)when(stop.IsCancellationRequested){}
@@ -78,9 +78,10 @@ internal sealed class UserMonitor : IDisposable
     {
         try
         {
-            if(Clipboard.ContainsText())
+            var text=BoundedClipboard.ReadAddressCandidate();
+            if(text!=null)
             {
-                var text=Clipboard.GetText();if(text.Length<200&&Regex.IsMatch(text,@"^(?:0x[0-9a-fA-F]{40}|bc1[a-zA-HJ-NP-Z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$",RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(50)))
+                if(text.Length<200&&Regex.IsMatch(text,@"^(?:0x[0-9a-fA-F]{40}|bc1[a-zA-HJ-NP-Z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$",RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(50)))
                 {
                     var hash=Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));var now=DateTimeOffset.UtcNow;
                     if(lastAddressHash!=null&&lastAddressHash!=hash&&now-addressAt<TimeSpan.FromSeconds(10))Add(32,"Warning","Possible address substitution","Clipboard changed between two payment-address-like strings; verify before pasting");
@@ -88,6 +89,7 @@ internal sealed class UserMonitor : IDisposable
                 }
                 else lastAddressHash=null;
             }
+            else lastAddressHash=null;
             foreach(var capability in new[]{"webcam","microphone"})
             {
                 using var key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\"+capability+@"\NonPackaged");
