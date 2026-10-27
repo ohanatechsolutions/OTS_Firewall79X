@@ -47,7 +47,15 @@ public sealed class LayerChecks
         baselines[name]=hash;
     }
     private LayerResult Channel(int id,string channel,string detail)
-        => Sensors?.Has(channel)==true?Good(id,detail,LayerMode.Monitoring,"Coverage depends on existing Windows audit policy; no auditing policy is changed. Events may not include every action."):Missing(id,Sensors?.Health.GetValueOrDefault(channel)??"Event collector is not running");
+    {
+        if(Sensors?.Has(channel)!=true)return Missing(id,Sensors?.Health.GetValueOrDefault(channel)??"Event collector is not running");
+        if(channel=="Security")
+        {
+            var policy=AuditPolicy.Coverage(id);
+            if(!policy.Enabled)return new(id,LayerMode.Unavailable,false,policy.Evidence,"Collector remains subscribed, but cannot claim functional coverage without the required audit policy. No system audit policy is modified.");
+        }
+        return Good(id,detail,LayerMode.Monitoring,"Existing system audit requirements are checked for Security-log detectors. Per-user exclusions and provider-specific settings can further limit events; no policy is changed.");
+    }
     public LayerResult Check(int id)
     {
         switch(id)
