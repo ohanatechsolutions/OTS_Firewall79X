@@ -26,9 +26,9 @@ public sealed class AuthenticationFailureMonitor
             || logonType is not (3 or 10))
             return new(false,false,0,"","Local, unknown, or unsupported logon type");
         if (!IPAddress.TryParse(rawSource,out var address) || address.ToString().Contains('%')
-            || !Detections.IsPublicAddress(address.ToString()))
+            || !NetworkAbuseWindow.EligiblePublicSource(address.ToString()))
             return new(false,false,0,"","Not a verified public remote source");
-        var source=address.MapToIPv4().Equals(address)?address.ToString():address.ToString();
+        var source=address.ToString();
         if (sources.Count>=2048 && !sources.ContainsKey(source))
         {
             foreach (var stale in sources.Where(x=>x.Value.Attempts.Count==0

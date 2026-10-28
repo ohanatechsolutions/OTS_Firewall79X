@@ -11,6 +11,7 @@ public sealed class EventSensors : IDisposable
     private readonly AuthenticationFailureMonitor authenticationFailures=new();
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
+    private readonly TemporaryFirewallGuard? networkGuard;
     private int remoteFailedLoginEvents,loginSecurityEvents;
     public int ObservedRemoteLogonFailures=>Volatile.Read(ref remoteFailedLoginEvents);
     public int ObservedLoginSecurityEvents=>Volatile.Read(ref loginSecurityEvents);
@@ -20,7 +21,7 @@ public sealed class EventSensors : IDisposable
     public int ObservedAuditedFileReads=>Volatile.Read(ref fileReadEvents);
     public int ObservedAuditedBrowserFileReads=>Volatile.Read(ref browserFileEvents);
     public System.Collections.Concurrent.ConcurrentDictionary<string,string> Health {get;}=new();
-    public EventSensors(EventStore events){this.events=events;}
+    public EventSensors(EventStore events,TemporaryFirewallGuard? networkGuard=null){this.events=events;this.networkGuard=networkGuard;}
     public void Start()
     {
         Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4648 or EventID=4672 or EventID=4720 or EventID=4722 or EventID=4723 or EventID=4724 or EventID=4725 or EventID=4726 or EventID=4728 or EventID=4729 or EventID=4732 or EventID=4733 or EventID=4738 or EventID=4740 or EventID=4756 or EventID=4767 or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
@@ -141,6 +142,7 @@ public sealed class EventSensors : IDisposable
                 }
                 case 5157:
                     var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);
+                    networkGuard?.ObserveBlocked(address,Get("Direction"),port,now);
                     events.Add(15,"Info","Windows blocked connection",$"Source {address}; destination port {port}. OS block observed; not attributed to OTS enforcement.");
                     lock(sync){if(attempts.Count>4096)attempts.Clear();if(!attempts.TryGetValue(address,out var q))attempts[address]=q=new();q.Enqueue((now,port));while(q.Count>0&&(q.Peek().Time<now.AddMinutes(-1)||q.Count>1000))q.Dequeue();if(Detections.Scan(q.Select(x=>x.Port)))events.Add(3,"High","Possible port scan",$"Source {address}; distinct blocked destination ports within 60 seconds");if(q.Count>=100)events.Add(2,"High","High blocked-connection rate",$"Source {address}; {q.Count} blocked connection events in 60 seconds");}break;
             }
