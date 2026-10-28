@@ -191,8 +191,13 @@ public sealed class LayerChecks
                 if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security Event Log collector unavailable");
                 var coverage34=AuditPolicy.Coverage(34);
                 if(!coverage34.Enabled)return Missing(id,coverage34.Evidence+"; per-file SACLs are also required");
+                var correlated=Sensors.RecentBulkReadPids.Where(pid=>EndpointSignals.PublicTcpForProcess(pid,Connections)).ToArray();
+                foreach(var pid in correlated)
+                    events.Add(34,"Warning","Audited bulk reads with outbound TCP",
+                        $"PID {pid} recently read 64+ SACL-audited files and has an established public TCP connection. This does NOT prove an upload or exfiltration.");
                 return Sensors.ObservedAuditedFileReads>0
-                    ?Good(id,$"{Sensors.ObservedAuditedFileReads} authenticated Windows 4663 file-read audit events observed; per-process, distinct-file bursts correlated",LayerMode.Monitoring,"Alerts unusual read bursts only, with false-positive suppression. Actual copying, file sizes, encrypted upload, and exfiltration are not proven; only SACL-audited objects are visible.")
+                    ?Good(id,$"{Sensors.ObservedAuditedFileReads} genuine Windows 4663 reads; {correlated.Length} current bulk-read/outbound-TCP correlations",LayerMode.Monitoring,
+                        "Requires successful object-access audit and matching file SACLs. Real transfer, uploaded bytes, cloud encryption, causality and short-lived TCP are NOT established.")
                     :Missing(id,"Object-access policy exists but there are no audited file reads. A suitable file SACL is necessary; no automatic SACL or audit policy changes are applied.");
             case 35:
                 var binaries=Directory.GetFiles(AppContext.BaseDirectory,"OTS*.dll");
