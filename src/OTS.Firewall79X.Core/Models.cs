@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -10,16 +11,28 @@ public sealed record LayerResult(int Id, LayerMode Mode, bool Healthy, string Ev
 public sealed record SecurityEvent(DateTimeOffset Time, int Layer, string Severity, string Kind, string Detail, bool Blocked = false);
 public sealed record Connection(int Pid, string Process, string Local, string Remote, string State);
 public sealed record Dashboard(bool Enabled, string Protection, int Score, double Confidence, DateTimeOffset Time, DateTimeOffset? ResumeAt, List<LayerResult> Layers, List<SecurityEvent> Events, List<Connection> Connections, long TotalEvents, long BlockedEvents, double ServiceMemoryMb, double? CpuPercent, string FeedStatus);
-public sealed record Request(string Command, int? Layer = null, bool? Enabled = null, string? Source = null, string? Destination = null, string? Secret = null);
+public sealed record Request(string Command, int? Layer = null, bool? Enabled = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Source = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Destination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Secret = null);
 public sealed record Response(bool Ok, string Message, Dashboard? Dashboard = null);
 public static class Wire
 {
     public static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() }, MaxDepth = 32 };
     public static readonly HashSet<string> Commands = ["status", "on", "off", "pause", "restore", "report", "selftest", "configure-backup", "configure-export", "disable-backup", "disable-export"];
     public static bool RequiresAdmin(string command) => command != "status";
-    public static bool ValidRequest(Request? request) =>
-        request is not null && request.Command is not null &&
-        Commands.Contains(request.Command) && request.Layer is null && request.Enabled is null;
+    public static bool ValidRequest(Request? request)
+    {
+        if (request is null || request.Command is null || !Commands.Contains(request.Command)
+            || request.Layer is not null || request.Enabled is not null) return false;
+        if (request.Command is "configure-backup" or "configure-export")
+            return (request.Command != "configure-backup" ||
+                    !string.IsNullOrWhiteSpace(request.Source) && request.Source.Length <= 512)
+                && (request.Command != "configure-export" || request.Source is null)
+                && !string.IsNullOrWhiteSpace(request.Destination) && request.Destination.Length <= 512
+                && request.Secret is { Length: >= 12 and <= 512 };
+        return request.Source is null && request.Destination is null && request.Secret is null;
+    }
     private static void ValidateRequestFrame(ReadOnlySpan<byte> bytes)
     {
         using var document = JsonDocument.Parse(bytes.ToArray(),
@@ -27,26 +40,48 @@ public static class Wire
                 CommentHandling = JsonCommentHandling.Disallow });
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Request must be an object");
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var property in root.EnumerateObject())
-        {
-            if (!seen.Add(property.Name) || property.Name is not ("Command" or "Layer" or "Enabled") ||
-                (property.Name != "Command" && property.Value.ValueKind != JsonValueKind.Null))
-                throw new InvalidDataException("Unexpected or repeated request property");
-        }
         if (!root.TryGetProperty("Command", out var command) ||
             command.ValueKind != JsonValueKind.String || command.GetString() is not string name ||
-            name.Length is < 1 or > 64)
+            name.Length is < 1 or > 64 || !Commands.Contains(name))
             throw new InvalidDataException("Unsupported request command");
+        bool configureBackup = name == "configure-backup";
+        bool configureExport = name == "configure-export";
+        bool configure = configureBackup || configureExport;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!seen.Add(property.Name))
+                throw new InvalidDataException("Unexpected or repeated request property");
+            bool safe = property.Name switch
+            {
+                "Command" => property.Value.ValueKind == JsonValueKind.String,
+                "Layer" or "Enabled" => property.Value.ValueKind == JsonValueKind.Null,
+                "Source" => configureBackup && property.Value.ValueKind == JsonValueKind.String
+                    && property.Value.GetString() is string source && source.Length is >= 1 and <= 512,
+                "Destination" => configure && property.Value.ValueKind == JsonValueKind.String
+                    && property.Value.GetString() is string destination && destination.Length is >= 1 and <= 512,
+                "Secret" => configure && property.Value.ValueKind == JsonValueKind.String
+                    && property.Value.GetString() is string secret && secret.Length is >= 12 and <= 512,
+                _ => false
+            };
+            if (!safe) throw new InvalidDataException("Unexpected or repeated request property");
+        }
+        if (configure && (!seen.Contains("Destination") || !seen.Contains("Secret") ||
+                (configureBackup && !seen.Contains("Source"))))
+            throw new InvalidDataException("Missing required resilience configuration");
     }
     public static string Clean(string? text, int max = 2048) => new((text ?? "").Where(c => !char.IsControl(c) || c is '\t').Take(max).ToArray());
     public static async Task WriteAsync<T>(Stream stream, T data, CancellationToken ct)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(data, Json);
         if (bytes.Length > 4 * 1024 * 1024) throw new InvalidDataException("Response too large");
-        await stream.WriteAsync(BitConverter.GetBytes(bytes.Length), ct);
-        await stream.WriteAsync(bytes, ct);
-        await stream.FlushAsync(ct);
+        try
+        {
+            await stream.WriteAsync(BitConverter.GetBytes(bytes.Length), ct);
+            await stream.WriteAsync(bytes, ct);
+            await stream.FlushAsync(ct);
+        }
+        finally { if (data is Request { Secret: not null }) CryptographicOperations.ZeroMemory(bytes); }
     }
     public static async Task<T> ReadAsync<T>(Stream stream, int max, CancellationToken ct)
     {
@@ -54,8 +89,12 @@ public static class Wire
         int length = BitConverter.ToInt32(prefix);
         if (length < 2 || length > max) throw new InvalidDataException("Invalid message length");
         var bytes = new byte[length]; await stream.ReadExactlyAsync(bytes, ct);
-        if (typeof(T) == typeof(Request)) ValidateRequestFrame(bytes);
-        return JsonSerializer.Deserialize<T>(bytes, Json) ?? throw new InvalidDataException("Empty message");
+        try
+        {
+            if (typeof(T) == typeof(Request)) ValidateRequestFrame(bytes);
+            return JsonSerializer.Deserialize<T>(bytes, Json) ?? throw new InvalidDataException("Empty message");
+        }
+        finally { if (typeof(T) == typeof(Request)) CryptographicOperations.ZeroMemory(bytes); }
     }
 }
 public static class Catalog
