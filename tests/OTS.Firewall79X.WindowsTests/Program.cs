@@ -8,6 +8,74 @@ if(!OperatingSystem.IsWindows())return 2;
 bool admin=new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 try
 {
+    if(args.Contains("--network-rule-probe"))
+    {
+        // Never operate concurrently with the protection service. Runs only on
+        // disposable CI after OFF and the existing Windows firewall snapshot.
+        if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")
+            throw new Exception("Firewall lifecycle probe is allowed only on disposable CI");
+        if(!admin)throw new Exception("Firewall lifecycle probe requires administrator");
+        var current=await Ipc.SendAsync("status");
+        if(!current.Ok||current.Dashboard?.Enabled!=false)
+            throw new Exception("Firewall lifecycle probe refused while the OTS service is enabled");
+        var path=Path.Combine(Path.GetTempPath(),"ots-fw-lifecycle-"+Guid.NewGuid().ToString("N"));
+        var now=DateTimeOffset.UtcNow;
+        using(var guard=new TemporaryFirewallGuard(new EventStore(path)))
+        {
+            guard.Start();
+            if(!guard.Operational)throw new Exception("Windows firewall test guard unavailable: "+guard.Health);
+            for(int i=0;i<20;i++)guard.ObserveBlocked("8.8.8.8","%%14592",1000+i,now.AddMilliseconds(i));
+            if(guard.ActiveRules!=1)throw new Exception("Inbound WFP-source rule was not installed exactly once: "+guard.Health);
+            var inbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.InboundPrefix+"8.8.8.8").ToArray();
+            if(inbound.Length!=1||inbound[0].Direction!="1"||inbound[0].Action!="0"||!TemporaryRuleIdentity.IsExactHost(inbound[0].RemoteAddresses,"8.8.8.8"))
+                throw new Exception("Installed inbound Windows Firewall rule mismatch: "+string.Join(";",inbound.Select(x=>$"{x.Name}: dir={x.Direction},action={x.Action},remote={x.RemoteAddresses}")));
+            if(!guard.BlockObservedIntelligence("1.1.1.1",now)||guard.IntelligenceRules!=1)
+                throw new Exception("Reactive outbound intelligence rule was not installed: "+guard.Health);
+            var outbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.OutboundPrefix+"1.1.1.1").ToArray();
+            if(outbound.Length!=1||outbound[0].Direction!="2"||outbound[0].Action!="0"||!TemporaryRuleIdentity.IsExactHost(outbound[0].RemoteAddresses,"1.1.1.1"))
+                throw new Exception("Installed outbound Windows Firewall rule mismatch: "+string.Join(";",outbound.Select(x=>$"{x.Name}: dir={x.Direction},action={x.Action},remote={x.RemoteAddresses}")));
+            guard.Sweep(now.AddMinutes(6),false);
+            if(guard.ActiveRules!=0||guard.IntelligenceRules!=0)
+                throw new Exception("Expired inbound/intelligence Windows Firewall rules not cleared: "+guard.Health);
+        }
+    if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")=="true")
+    {
+        // Integration regression: an attacker or external administrator may create a
+        // reserved-name rule. A prefix is not sufficient authority to delete it.
+        dynamic firewall=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        var spoofName=OwnedFirewallRule.InboundPrefix+"9.9.9.9";
+        dynamic spoof=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
+        try
+        {
+            spoof.Name=spoofName;
+            spoof.Description="External rule: never delete solely by reserved name";
+            spoof.Direction=1;spoof.Action=0;spoof.Protocol=256;
+            spoof.RemoteAddresses="9.9.9.9";spoof.Profiles=int.MaxValue;spoof.Enabled=true;
+            firewall.Rules.Add(spoof);
+            using(var guarded=new TemporaryFirewallGuard(new EventStore(
+                Path.Combine(Path.GetTempPath(),"ots-rule-preservation-ci-"+Guid.NewGuid().ToString("N")))))
+            {
+                guarded.Start();
+                if(guarded.Operational)throw new Exception("Guard incorrectly accepted externally spoofed reserved-prefix firewall rule");
+            }
+            dynamic? stillPresent=firewall.Rules.Item(spoofName);
+            if(stillPresent==null)throw new Exception("Modified reserved-name rule was deleted by cleanup");
+            System.Runtime.InteropServices.Marshal.ReleaseComObject(stillPresent);
+        }
+        finally
+        {
+            try{firewall.Rules.Remove(spoofName);}
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(spoof);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(firewall);
+            }
+        }
+    }
+        var leftovers=new FirewallAudit().Read().Rules.Where(x=>TemporaryRuleIdentity.UsesReservedName(x.Name)).ToArray();
+        if(leftovers.Length>0)throw new Exception("OTS temporary rules remained after disposal");
+        return 0;
+    }
     if(args.Contains("--impostor"))
     {
         if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")throw new Exception("Impostor probe is restricted to disposable CI");
@@ -72,49 +140,13 @@ try
     var hardware=SecurityDeviceAudit.Read();
     if(!hardware.Evidence.Contains("TPM:")||!hardware.Evidence.Contains("OS drive protection:"))
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
-    var policy=new TemporaryFirewallGuard(new EventStore(Path.Combine(Path.GetTempPath(),"ots-network-guard-ci-"+Guid.NewGuid().ToString("N"))));
-    policy.Start();
-    if(policy.BlockObservedIntelligence("127.0.0.1",DateTimeOffset.UtcNow) ||
-       policy.BlockObservedIntelligence("192.0.2.10",DateTimeOffset.UtcNow) ||
-       policy.BlockObservedIntelligence("::ffff:8.8.8.8",DateTimeOffset.UtcNow))
-       throw new Exception("Invalid intelligence destination passed allowlist");
-    if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
-    if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
-    policy.Dispose();
-    if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")=="true")
-    {
-        // Integration regression: an attacker or external administrator may create a
-        // reserved-name rule. A prefix is not sufficient authority to delete it.
-        dynamic firewall=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
-        var spoofName=OwnedFirewallRule.InboundPrefix+"9.9.9.9";
-        dynamic spoof=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
-        try
-        {
-            spoof.Name=spoofName;
-            spoof.Description="External rule: never delete solely by reserved name";
-            spoof.Direction=1;spoof.Action=0;spoof.Protocol=256;
-            spoof.RemoteAddresses="9.9.9.9";spoof.Profiles=int.MaxValue;spoof.Enabled=true;
-            firewall.Rules.Add(spoof);
-            using(var guarded=new TemporaryFirewallGuard(new EventStore(
-                Path.Combine(Path.GetTempPath(),"ots-rule-preservation-ci-"+Guid.NewGuid().ToString("N")))))
-            {
-                guarded.Start();
-                if(!guarded.Operational)throw new Exception("Guard failed to initialize");
-            }
-            dynamic? stillPresent=firewall.Rules.Item(spoofName);
-            if(stillPresent==null)throw new Exception("Modified reserved-name rule was deleted by cleanup");
-            System.Runtime.InteropServices.Marshal.ReleaseComObject(stillPresent);
-        }
-        finally
-        {
-            try{firewall.Rules.Remove(spoofName);}
-            finally
-            {
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(spoof);
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(firewall);
-            }
-        }
-    }
+    // Do not create a second guard here: starting it would sweep the live OTS
+    // service's owned temporary restrictions and alter enforcement during CI.
+    if(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","10.1.2.3","445","8.8.8.8","50544","6",out var blockedProbe)
+       || blockedProbe?.RemoteAddress!="8.8.8.8"||blockedProbe.LocalPort!=445)
+       throw new Exception("WFP event endpoint roles are wrong");
+    var firewallSnapshot=new FirewallAudit().Read();
+    if(firewallSnapshot.Rules.Count<0)throw new Exception("Firewall snapshot missing");
     var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
