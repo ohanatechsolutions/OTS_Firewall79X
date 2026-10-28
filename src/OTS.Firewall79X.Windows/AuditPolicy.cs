@@ -27,7 +27,8 @@ public static class AuditPolicy
             41 => [("9215",2,"Logon failures")],
             45 => [("9215",3,"Logon success/failure"),("921B",1,"Special Logon"),
                 ("9235",1,"User Account Management"),("9237",1,"Security Group Management"),
-                ("922F",1,"Audit Policy Change"),("922B",1,"Process Creation")],
+                ("922F",1,"Audit Policy Change"),("922B",1,"Process Creation"),
+                ("9228",3,"Sensitive Privilege Use success/failure")],
             _ => []
         };
         List<string> missing=[];

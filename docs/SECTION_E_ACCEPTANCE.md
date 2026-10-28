@@ -25,7 +25,7 @@ Section E now includes opt-in, administrator-authorized, two-minute RDP-only (TC
 
 ### Layer 45 — Login and privilege alerts
 - Event subscription includes 4624/4625 interactive/network/RDP/new-credentials authentication, 4648 explicit credentials, 4634/4647 logoff, 4778/4779 RDP session transitions, 4800/4801 lock/unlock, 4740 account lockouts, 4672 privilege assignment, 4673/4674 sensitive privilege operations, account/group/policy changes, and 4688 observed elevated-process token.
-- Dedicated access/privilege counters distinguish category coverage. Native Windows audit subcategories are checked; they are never silently enabled.
+- Dedicated access/privilege counters distinguish category coverage. Native Windows audit subcategories are checked, including Sensitive Privilege Use (0CCE9228 success/failure), Process Creation and account/group changes; they are never silently enabled. The layer reports unavailable whenever mandatory policy categories are missing.
 
 ## Acceptance still outstanding
 
