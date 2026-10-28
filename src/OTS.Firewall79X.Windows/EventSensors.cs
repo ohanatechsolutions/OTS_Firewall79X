@@ -8,9 +8,13 @@ public sealed class EventSensors : IDisposable
 {
     private readonly List<EventLogWatcher> watchers=[];private readonly EventStore events;
     private readonly object sync=new();private readonly Dictionary<string,Queue<(DateTimeOffset Time,int Port)>> attempts=[];
-    private readonly Dictionary<string,Queue<DateTimeOffset>> failures=[];
+    private readonly AuthenticationFailureMonitor authenticationFailures=new();
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
+    private readonly TemporaryFirewallGuard? networkGuard;
+    private int remoteFailedLoginEvents,loginSecurityEvents;
+    public int ObservedRemoteLogonFailures=>Volatile.Read(ref remoteFailedLoginEvents);
+    public int ObservedLoginSecurityEvents=>Volatile.Read(ref loginSecurityEvents);
     private int parsedDnsResponses;
     public int ObservedDnsResponses=>Volatile.Read(ref parsedDnsResponses);
     private int fileReadEvents, browserFileEvents, keyloggerAlerts;
@@ -29,7 +33,7 @@ public sealed class EventSensors : IDisposable
     public int ObservedAuditedFileReads=>Volatile.Read(ref fileReadEvents);
     public int ObservedAuditedBrowserFileReads=>Volatile.Read(ref browserFileEvents);
     public System.Collections.Concurrent.ConcurrentDictionary<string,string> Health {get;}=new();
-    public EventSensors(EventStore events){this.events=events;}
+    public EventSensors(EventStore events,TemporaryFirewallGuard? networkGuard=null){this.events=events;this.networkGuard=networkGuard;}
     public void Start()
     {
         Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4672 or EventID=4673 or EventID=4674 or EventID=4720 or EventID=4722 or EventID=4724 or EventID=4726 or EventID=4728 or EventID=4732 or EventID=4735 or EventID=4737 or EventID=4738 or EventID=4756 or EventID=4719 or EventID=1102 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
@@ -70,10 +74,43 @@ public sealed class EventSensors : IDisposable
         {
             switch(record.Id)
             {
-                case 4624:events.Add(45,"Info","Login",$"Type {Get("LogonType")}; source {Get("IpAddress")}");break;
+                case 4624:
+                {
+                    var type=Get("LogonType");
+                    if(type is "2" or "3" or "7" or "10" or "11")
+                    {
+                        var kind=type switch {"2"=>"Interactive","3"=>"Network","7"=>"Unlock","10"=>"Remote interactive (RDP)","11"=>"Cached interactive",_=>"Unknown"};
+                        var account=Wire.Clean(Get("TargetUserName"),64);
+                        events.Add(45,type=="10"?"Warning":"Info",kind+" logon",
+                            $"Account={account}; remote={Wire.Clean(Get("IpAddress"),64)}; Windows Security event 4624.");
+                        Interlocked.Increment(ref loginSecurityEvents);
+                    }
+                    break;
+                }
                 case 4625:
-                    events.Add(45,"Warning","Failed login",$"Source {Get("IpAddress")}; status {Get("Status")}");
-                    lock(sync){var ip=Get("IpAddress");if(failures.Count>4096)failures.Clear();if(!failures.TryGetValue(ip,out var q))failures[ip]=q=new();q.Enqueue(now);while(q.Count>0&&q.Peek()<now.AddMinutes(-2))q.Dequeue();if(q.Count>=8)events.Add(41,"High","Repeated failed authentication",$"{q.Count} failures from {ip} within 2 minutes; no automatic ban");}break;
+                {
+                    var type=Get("LogonType");
+                    events.Add(45,"Warning","Failed authentication",
+                        $"Type={Wire.Clean(type,8)}; source={Wire.Clean(Get("IpAddress"),64)}; status={Wire.Clean(Get("Status"),20)}; Windows event 4625.");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    lock(sync)
+                    {
+                        var failure=authenticationFailures.Observe(Get("IpAddress"),type,now);
+                        if(failure.ValidRemoteSource)
+                        {
+                            Interlocked.Increment(ref remoteFailedLoginEvents);
+                            if(failure.Alert)
+                                events.Add(41,"High","Repeated remote authentication failures",
+                                    $"{failure.Count} observed network/remote-interactive failures from {failure.Source} within two minutes; suspicious but no IP ban or account lockout was applied.");
+                        }
+                    }
+                    break;
+                }
+                case 4648:
+                    events.Add(45,"Warning","Explicit credentials used",
+                        $"Windows event 4648; calling account {Wire.Clean(Get("SubjectUserName"),64)}. No credentials collected.");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
                 case 4672:case 4673:case 4674:case 4720:case 4722:case 4724:case 4726:
                 case 4728:case 4732:case 4735:case 4737:case 4738:case 4756:case 4719:case 1102:
                     events.Add(27,record.Id is 4672 or 4673 or 4674?"Info":"Warning",
@@ -103,6 +140,7 @@ public sealed class EventSensors : IDisposable
                 case 4688:var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"),Get("ParentProcessName"));if(indicator!=null)events.Add(36,"Warning","Suspicious execution indicator",indicator);break;
                 case 5157:
                     var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);
+                    networkGuard?.ObserveBlocked(address,Get("Direction"),port,now);
                     events.Add(15,"Info","Windows blocked connection",$"Source {address}; destination port {port}. OS block observed; not attributed to OTS enforcement.");
                     lock(sync){if(attempts.Count>4096)attempts.Clear();if(!attempts.TryGetValue(address,out var q))attempts[address]=q=new();q.Enqueue((now,port));while(q.Count>0&&(q.Peek().Time<now.AddMinutes(-1)||q.Count>1000))q.Dequeue();if(Detections.Scan(q.Select(x=>x.Port)))events.Add(3,"High","Possible port scan",$"Source {address}; distinct blocked destination ports within 60 seconds");if(q.Count>=100)events.Add(2,"High","High blocked-connection rate",$"Source {address}; {q.Count} blocked connection events in 60 seconds");}break;
             }

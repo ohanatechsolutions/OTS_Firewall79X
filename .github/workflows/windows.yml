@@ -2,6 +2,8 @@ name: Windows build and installation verification
 on:
   push:
     branches: [main, build/windows-security-stack, feat/section-d-host-endpoint-20261027]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read

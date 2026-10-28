@@ -11,19 +11,24 @@ public sealed class LayerChecks
     private readonly Dictionary<string,List<DateTimeOffset>> connectionsHistory=[];
     private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start,int Streak)> processSamples=[];
     public EventSensors? Sensors {get;set;}
+    public TemporaryFirewallGuard? NetworkGuard {get;set;}
+    private HashSet<string>? bluetoothPrevious;
     public FeodoThreatFeed? ThreatFeed {get;set;}
     private readonly HashSet<string> intelAlerts=[];
     private SecurityDeviceAudit.Result? deviceSnapshot;
     private SecurityDeviceAudit.Result DeviceStatus()=>deviceSnapshot??=SecurityDeviceAudit.Read();
     public List<Connection> Connections {get;private set;}=[];
     public string? NetworkError {get;private set;}
+    public string? UdpError {get;private set;}
+    private bool? bluetoothDiscoverable;
     public FirewallAudit? Firewall {get;}=new();
     private (bool Safe,string Description,List<FirewallAudit.Rule> Rules)? firewall;
     public LayerChecks(EventStore events){this.events=events;}
     public void Prepare()
     {
-        firewall=null;NetworkError=null;deviceSnapshot=null;
+        firewall=null;NetworkError=null;UdpError=null;deviceSnapshot=null;
         try{Connections=NetworkTables.Connections();TrackNetwork();TrackIntel();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
+        try{Connections.AddRange(NetworkTables.UdpSockets());}catch(Exception ex){UdpError=ex.Message;}
         try{firewall=Firewall!.Read();}catch(Exception ex){events.Add(1,"Warning","Firewall query failed",ex.Message);}
     }
     private void TrackNetwork()
@@ -54,8 +59,12 @@ public sealed class LayerChecks
             var fingerprint=$"{c.Pid}:{host}";
             if(intelAlerts.Count>2000)intelAlerts.Clear();
             if(intelAlerts.Add(fingerprint))
+            {
+                bool blocked=NetworkGuard?.BlockObservedIntelligence(host,DateTimeOffset.UtcNow)==true;
                 events.Add(5,"High","Possible botnet C2 connection",
-                    $"Windows observed {Wire.Clean(c.Process,80)} (PID {c.Pid}) connected to a Feodo-listed IPv4 address; review network activity. No OTS block was applied.");
+                    $"Windows observed {Wire.Clean(c.Process,80)} (PID {c.Pid}) connected to a Feodo-listed IPv4 address. "+
+                    (blocked?"A temporary outbound rule was installed; any subsequent drops are not verified.":"No additional OTS restriction was installed."));
+            }
         }
     }
     private LayerResult Good(int id,string evidence,LayerMode mode=LayerMode.Auditing,string limitation="")=>new(id,mode,true,evidence,limitation);
@@ -82,15 +91,35 @@ public sealed class LayerChecks
     {
         switch(id)
         {
-            case 1:case 6:case 9:
+            case 1:
                 if(firewall==null)return Missing(id,"Windows Firewall state could not be read");
-                return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Enforcement is provided by existing Windows Firewall policy. Existing exceptions are preserved. OTS does not automatically overwrite profile settings."):Bad(id,firewall.Value.Description,"Some profiles are disabled or allow inbound by default; automatic policy replacement is withheld to preserve management access.");
-            case 2:return Channel(id,"Security","Detects high rates of logged blocked connections; does not rate-limit SYN/ICMP/UDP floods or prevent link saturation.");
-            case 3:return Channel(id,"Security","Detects 12 distinct blocked destination ports per source within 60 seconds; alerts without automatic bans.");
-            case 4:return Missing(id,"Packet-level anti-spoofing and malformed-packet inspection are not implemented. Windows TCP/IP validation is not claimed as an OTS layer.");
+                return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Windows Firewall is enforcing inbound default deny on all three profiles. Rule precedence, policy conflicts, exceptions and statefulness are not independently certified."):Bad(id,firewall.Value.Description,"One or more profiles allow inbound or have firewall disabled. No automatic blanket policy overwrite.");
+            case 6:
+                if(firewall==null)return Missing(id,"Windows Firewall state unavailable for IPv6 policy audit");
+                if(NetworkError!=null||UdpError!=null)return Missing(id,"TCP/UDP IPv4/IPv6 endpoint enumeration incomplete: "+(NetworkError??UdpError));
+                return firewall.Value.Safe
+                    ?Good(id,$"All firewall profiles have inbound default deny; {Connections.Count(c=>c.State=="UDP Bound")} IPv4/IPv6 UDP bindings observed",LayerMode.Monitoring,"Firewall profile policies apply to both families; raw ICMPv6, fragmentation, all WFP policies and recovery parity have not been independently verified.")
+                    :Bad(id,firewall.Value.Description,"A disabled/permissive profile undermines both address families.");
+            case 9:
+                if(firewall==null)return Missing(id,"Windows Firewall policy unavailable");
+                bool publicSmb=firewall.Value.Rules.Any(r=>r.Enabled&&r.Direction=="1"&&r.Action=="1"&&r.Protocol=="6"&&
+                    int.TryParse(r.Profiles,out int profiles)&&(profiles&4)!=0&&
+                    r.RemoteAddresses is "*" or "" && r.LocalPorts.Split(',').Any(p=>p.Trim() is "139" or "445"));
+                if(!firewall.Value.Safe)return Bad(id,firewall.Value.Description,"Inbound firewall defaults do not enforce a safe baseline on every profile.");
+                return publicSmb
+                    ?Bad(id,"Broad SMB inbound allow rule is configured for the Public profile","An overlapping block can change effective behavior; review exposed sharing and remote access.")
+                    :Good(id,"All Windows Firewall profiles enabled/default-deny; no broad TCP 139/445 Public-profile allow observed",LayerMode.Auditing,"Read-only rule review; not proof of effective GPO, network category, broader sharing protocols or automatic untrusted Wi-Fi hardening.");
+            case 2:case 3:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security event subscription is unavailable");
+                if(!AuditPolicy.Coverage(id).Enabled)return Missing(id,"Filtering Platform Connection failure auditing is disabled; source restrictions are not reliably triggered.");
+                if(NetworkGuard?.Operational!=true)return Missing(id,"Temporary Windows Firewall source restriction API unavailable: "+(NetworkGuard?.Health??"not started"));
+                return id==2
+                    ?Good(id,$"Event-correlated source restrictions active; {NetworkGuard.ActiveRules} temporary inbound rules",LayerMode.Monitoring,"Not SYN, UDP, ICMP, connection-rate or link-saturation mitigation; only Windows 5157 already-blocked connections are observed.")
+                    :Good(id,$"Validated inbound scan alerting and exact-source five-minute blocks; {NetworkGuard.ActiveRules} temporary rules",LayerMode.Enforcing,"Uses already-blocked Windows 5157 events; 20-port/150-event thresholds and cooldown reduce but do not eliminate false positives; a hard crash can leave rules until service recovery.");
+            case 4:return Missing(id,"No supported WFP callout/packet parser for ingress spoofing, malformed IPv4/IPv6 headers, extension chains or fragments; Windows TCP/IP validation is not claimed as an OTS packet-inspection engine.");
             case 5:
                 return ThreatFeed?.Active is { } intel
-                    ?Good(id,$"Observation-only: {intel.Addresses.Count} recent Feodo Tracker C2 IPv4 indicators; established outbound TCP connections compared each scan",LayerMode.Monitoring,"No source-blocking rules, domain intelligence, full UDP visibility or signed-feed proof. Only currently fresh source timestamps are accepted.")
+                    ?Good(id,$"{intel.Addresses.Count} fresh Feodo C2 IPv4 indicators; {NetworkGuard?.IntelligenceRules??0} short-lived exact-destination outbound rules; observed TCP connections monitored",LayerMode.Monitoring,"Rules are reactive and may not interrupt existing connections; not signed intelligence, full-feed blocking, IPv6 indicators, UDP flow inspection or a malware verdict.")
                     :Missing(id,ThreatFeed?.Summary??"Threat intelligence unavailable");
             case 7:
                 var model=SystemQueries.Wmi("root\\cimv2","SELECT Manufacturer,Model FROM Win32_ComputerSystem","Manufacturer","Model").FirstOrDefault();
@@ -103,8 +132,21 @@ public sealed class LayerChecks
                     ?Good(id,$"{Sensors.ObservedDnsResponses} actual DNS Client 3008 response events correlated for public-to-private address transitions",LayerMode.Monitoring,"Heuristic warning only: may miss DoH, alternate resolvers and queries without Event 3008; split-horizon networks can trigger legitimate changes. No DNS interception or rebinding block is applied.")
                     :Missing(id,"DNS Client subscription exists, but no valid address-bearing Event 3008 responses have been observed; rebinding telemetry is unverified.");
             case 10:
-                var bt=SystemQueries.Wmi("root\\cimv2","SELECT Name,Status FROM Win32_PnPEntity WHERE PNPClass='Bluetooth'","Name","Status");Changed(id,"Bluetooth device inventory",bt);
-                return bt.Count==0?Na(id,"No Bluetooth device reported by Windows"):Good(id,$"{bt.Count} Bluetooth devices observed",LayerMode.Monitoring,"Inventory changes only; pairing authorization and discoverability hardening are not implemented.");
+                var bt=SystemQueries.Wmi("root\\cimv2","SELECT Name,Status,PNPDeviceID FROM Win32_PnPEntity WHERE PNPClass='Bluetooth'","Name","Status","PNPDeviceID");
+                var currentBt=bt.Select(x=>x.GetValueOrDefault("PNPDeviceID","")).Where(x=>x.Length>0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if(bluetoothPrevious!=null)
+                    foreach(var device in currentBt.Except(bluetoothPrevious).Take(32))
+                        events.Add(10,"Warning","New Bluetooth PnP device observed","Device inventory changed; pairing/discoverability and connection authorization are not attested. ID fingerprint "+SystemQueries.Fingerprint(device)[..16]);
+                bluetoothPrevious=currentBt;Changed(id,"Bluetooth device inventory",bt);
+                var radio=BluetoothRadioAudit.Read();
+                if(bt.Count==0&&radio.Available&&radio.Radios==0)return Na(id,"No active native Bluetooth radio or Bluetooth PnP inventory");
+                if(!radio.Available)return Missing(id,radio.Evidence);
+                bool visible=radio.Discoverable>0;
+                if(visible&&bluetoothDiscoverable!=true)
+                    events.Add(10,"Warning","Bluetooth radio discoverable","Windows native API reports a discoverable local Bluetooth radio; verify whether discovery is intentional.");
+                bluetoothDiscoverable=visible;
+                return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence,LayerMode.Monitoring,
+                    "Native discovery/connectability and PnP changes are monitored; pairing authorization and authenticated remote connections are not independently confirmed.");
             case 11:case 12:case 13:return Missing(id,"Deception monitor has not reported health");
             case 14:return Missing(id,"An established packet intrusion-detection engine and validated network signature set are not yet integrated.");
             case 15:return Channel(id,"Security","Classifies supported Windows authentication, privilege, and blocked-connection events; broad ATT&CK correlation is incomplete.");
@@ -263,22 +305,28 @@ public sealed class LayerChecks
                     return Na(id,"No recognized container service, management listener, loaded-user WSL installation or Docker daemon configuration observed; this is not a complete remote engine search.");
                 return Good(id,$"{container.Count} services; {containerConfig.Distros} loaded-user WSL distributions; {endpoints.TlsCandidates} possible TLS listeners; "+containerConfig.Daemon.Evidence,
                     LayerMode.Auditing,"No effective daemon query, published-container-port audit, named-pipe ACL or WSL2 port-forwarding proof. TCP 2376 does not prove TLS.");
-            case 41:return Channel(id,"Security","Alerts on eight failed logins per source in two minutes; automatic source bans withheld to avoid lockout.");
+            case 41:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Security event subscription unavailable: no verified remote login protection");
+                var audit41=AuditPolicy.Coverage(41);
+                if(!audit41.Enabled)return Missing(id,audit41.Evidence);
+                return Good(id,$"Observed {Sensors.ObservedRemoteLogonFailures} verified public-source remote failed logins; bounded per-source correlation, threshold=8 failures in 2 minutes, alerts deduplicated for 5 minutes",
+                    LayerMode.Monitoring,"Windows Security Event 4625 types 3/10 only; unsupported services and nonpublic sources are not attributed. No automatic IP restriction: unverified bans can lock out legitimate remote administrators.");
             case 42:
-                var config=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ssh","sshd_config");
-                if(!File.Exists(config))return Na(id,"Default Windows sshd_config not found; custom -f configuration, OpenSSH service state and listening endpoints require separate verification");
-                if(new FileInfo(config).Length>256*1024)return Missing(id,"OpenSSH configuration exceeds bounded review size");
-                var ssh=OpenSshPolicyAudit.Parse(File.ReadAllText(config));
-                var info=$"Global sshd directives: password authentication={ssh.PasswordAuthentication?.ToString()??"unspecified"}, public-key authentication={ssh.PublicKeyAuthentication?.ToString()??"unspecified"}, empty passwords={ssh.PermitEmptyPasswords?.ToString()??"unspecified"}, Include/Match={ssh.RequiresEffectiveVerification}";
-                if(ssh.ExplicitWeakness)return Bad(id,info+"; explicitly permissive global authentication directive detected",
-                    "OpenSSH's effective -T output, includes, Match contexts, startup -f settings and key-file ACLs have not been verified.");
-                return ssh.ExplicitlyHardened
-                    ?Good(id,info,LayerMode.Auditing,"Global configuration is explicitly restrictive, but effective -T settings, service arguments, key ACLs and port exposure still need independent verification.")
-                    :Missing(id,info+"; insufficient evidence to claim SSH is hardened. Conditional Include/Match settings and defaults require an effective sshd -T audit.");
-            case 43:return new(id,LayerMode.Idle,false,"Optional password check is available in the desktop interface; no password provided","Uses SHA-1 range queries only when requested; plaintext is never uploaded.");
+                var sshAudit=SshEffectiveAudit.Read(Connections);
+                return new(id,sshAudit.Mode,sshAudit.Healthy,sshAudit.Evidence,sshAudit.Limitations);
+            case 43:
+                return new(id,LayerMode.Idle,false,"Optional password range lookup is idle; the user must explicitly request a check",
+                    "Only five SHA-1 hex prefix characters are submitted to the range endpoint with padding; responses are size- and format-validated. No password is stored or sent. Requires internet access.");
             case 44:
-                var accounts=SystemQueries.Wmi("root\\cimv2","SELECT Name,Disabled,PasswordRequired FROM Win32_UserAccount WHERE LocalAccount=True","Name","Disabled","PasswordRequired");int weak=accounts.Count(a=>a["Disabled"]=="False"&&a["PasswordRequired"]=="False");Changed(id,"Local account state",accounts);return weak>0?Bad(id,$"{weak} enabled accounts do not require passwords", "Account policy flags do not establish actual password strength or staleness."):Good(id,$"{accounts.Count} local accounts audited",LayerMode.Auditing,"Does not inspect password contents, domain policies, or account staleness.");
-            case 45:return Channel(id,"Security","Monitors login, failed login, and special-privilege assignment events.");
+                var accountAudit=LocalAccountSecurityAudit.Read();
+                Changed(id,"Local account, administrator and password policy baseline",accountAudit.Baseline);
+                return new(id,LayerMode.Auditing,accountAudit.Healthy,accountAudit.Evidence,accountAudit.Limitations);
+            case 45:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security log collector unavailable");
+                var audit45=AuditPolicy.Coverage(45);
+                if(!audit45.Enabled)return Missing(id,audit45.Evidence);
+                return Good(id,$"Verified logon/failed-logon audit policy and Security event subscription; {Sensors.ObservedLoginSecurityEvents} account access/privilege events observed",
+                    LayerMode.Monitoring,"Classifies interactive, network, unlock, remote interactive and cached logons; watches explicit credentials, privileged logons, account changes, and token elevation when process creation is audited. Security event logging and provider configuration determine coverage.");
             case 46:
                 var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
                 var hardening=HostHardeningAudit.Read();var hardware=DeviceStatus();

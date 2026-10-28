@@ -141,7 +141,80 @@ Test("TPM and BitLocker unknown-state handling",()=>{
     Assert(SecurityDeviceStates.VolumeProtected("0")==false);
     Assert(SecurityDeviceStates.VolumeProtected("2")==null);
 });
-
+Test("Network restrictions reject outbound, private, mapped and documentation sources",()=>{
+    var now=DateTimeOffset.UtcNow;var detector=new NetworkAbuseWindow();
+    foreach(var ip in new[]{"127.0.0.1","10.0.2.8","192.0.2.9","198.51.100.20","203.0.113.24","::1","fc00::123","2001:db8::1","::ffff:8.8.8.8"})
+    {
+        Assert(!NetworkAbuseWindow.EligiblePublicSource(ip),ip);
+        for(int i=0;i<50;i++)Assert(!detector.Observe(ip,"%%14592",1000+i,now).Restrict,ip);
+    }
+    Assert(!detector.Observe("8.8.8.8","%%14593",80,now).Eligible);
+    Assert(!detector.Observe("8.8.8.8","Inbound",80,now).Eligible);
+    Assert(!detector.Observe("8.8.8.8","%%14592",0,now).Eligible);
+    Assert(!NetworkAbuseWindow.EligiblePublicSource("8.8.8.8",new[]{"8.8.8.8"}));
+    Assert(NetworkAbuseWindow.EligiblePublicSource("8.8.8.8"));
+    Assert(NetworkAbuseWindow.EligiblePublicSource("2606:4700:4700::1111"));
+});
+Test("Inbound scan escalates only after 20 distinct ports and cools down",()=>{
+    var detector=new NetworkAbuseWindow();var now=DateTimeOffset.UtcNow;
+    for(int i=1;i<=19;i++)
+    {
+        var f=detector.Observe("8.8.4.4","%%14592",i,now.AddMilliseconds(i));
+        Assert(f.Eligible && !f.Restrict);
+        if(i==12)Assert(f.Scan);
+    }
+    Assert(detector.Observe("8.8.4.4","%%14592",20,now.AddSeconds(1)).Restrict);
+    Assert(!detector.Observe("8.8.4.4","%%14592",21,now.AddSeconds(2)).Restrict);
+    Assert(detector.Observe("8.8.4.4","%%14592",22,now.AddMinutes(21)).Eligible);
+});
+Test("Flood threshold does not treat a single repetitive service as a ban",()=>{
+    var detector=new NetworkAbuseWindow();var now=DateTimeOffset.UtcNow;
+    for(int i=0;i<200;i++)Assert(!detector.Observe("1.1.1.1","%%14592",443,now.AddMilliseconds(i)).Restrict);
+    var other=new NetworkAbuseWindow();bool restricted=false;
+    for(int i=0;i<150;i++)restricted|=other.Observe("1.0.0.1","%%14592",1000+i%4,now.AddMilliseconds(i)).Restrict;
+    Assert(restricted);
+});
+Test("Layer 41 aggregates only verified public-source remote Windows logons, with cooldown",()=>{
+    var auth=new AuthenticationFailureMonitor();var now=DateTimeOffset.UtcNow;AuthenticationFailureMonitor.Finding finding=new(false,false,0,"","");
+    Assert(!auth.Observe("203.0.113.5","2",now).ValidRemoteSource);
+    Assert(!auth.Observe("127.0.0.1","10",now).ValidRemoteSource);
+    Assert(!auth.Observe("192.168.1.15","3",now).ValidRemoteSource);
+    Assert(!auth.Observe("-","10",now).ValidRemoteSource);
+    for(int i=0;i<8;i++)finding=auth.Observe("8.8.8.8","10",now.AddSeconds(i));
+    Assert(finding.ValidRemoteSource&&finding.Alert&&finding.Count==8);
+    Assert(!auth.Observe("8.8.8.8","10",now.AddSeconds(9)).Alert);
+    Assert(!auth.Observe("8.8.8.8","10",now.AddMinutes(3)).Alert);
+    for(int i=0;i<8;i++)finding=auth.Observe("8.8.8.8","3",now.AddMinutes(6).AddSeconds(i));
+    Assert(finding.Alert);
+});
+Test("Layer 41 handles IPv6 and large source pools within a bounded detector",()=>{
+    var auth=new AuthenticationFailureMonitor();var now=DateTimeOffset.UtcNow;
+    Assert(auth.Observe("2606:4700:4700::1111","3",now).ValidRemoteSource);
+    Assert(!auth.Observe("fe80::1","3",now).ValidRemoteSource);
+    for(int i=0;i<2500;i++)auth.Observe($"8.{i/256}.{i%256}.1","3",now);
+    Assert(auth.Observe("9.9.9.9","10",now).ValidRemoteSource);
+});
+Test("Layer 43 hashes only the requested password and validates padded breach range",()=>{
+    var password=System.Text.Encoding.UTF8.GetBytes("correct horse battery staple");
+    var range=PasswordBreachRange.ComputeRange(password);
+    Assert(range.Prefix.Length==5&&range.Suffix.Length==35);
+    var response=range.Suffix+":42\r\n"+new string('F',35)+":0\r\n";
+    Assert(PasswordBreachRange.ParseCount(range.Suffix,response)==42);
+    Assert(PasswordBreachRange.ParseCount(new string('A',35),response)==0);
+    Throws<InvalidDataException>(()=>PasswordBreachRange.ParseCount(range.Suffix,"not-a-range-response"));
+    Throws<InvalidDataException>(()=>PasswordBreachRange.ParseCount(range.Suffix,response+response));
+    Throws<InvalidDataException>(()=>PasswordBreachRange.ParseCount(range.Suffix,new string('A',1024*1024+1)));
+    Throws<ArgumentException>(()=>PasswordBreachRange.ParseCount("invalid",response));
+    System.Security.Cryptography.CryptographicOperations.ZeroMemory(password);
+});
+Test("Layer 42 parses effective SSH policy without trusting defaults",()=>{
+    var hardened=EffectiveSshPolicy.Parse("passwordauthentication no\npubkeyauthentication yes\npermitemptypasswords no\npermitrootlogin prohibit-password\nstrictmodes yes\nallowtcpforwarding no\nx11forwarding no\n");
+    Assert(hardened.Complete&&hardened.Hardened&&!hardened.Weak);
+    var weak=EffectiveSshPolicy.Parse("passwordauthentication yes\npubkeyauthentication no\npermitemptypasswords yes\npermitrootlogin yes\nstrictmodes no");
+    Assert(weak.Weak&&!weak.Hardened);
+    Assert(!EffectiveSshPolicy.Parse("passwordauthentication no").Hardened);
+    Throws<InvalidDataException>(()=>EffectiveSshPolicy.Parse(new string('x',256*1024+1)));
+});
 Test("Section D parses genuine Security 4663 decimal/hex PIDs only",()=>{
     Assert(EndpointSignals.AuditProcessId("0x3e8")==1000);
     Assert(EndpointSignals.AuditProcessId("1000")==1000);
