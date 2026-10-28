@@ -70,13 +70,13 @@ public sealed class MaliciousDomainFeed : IDisposable
 public sealed class DomainHostsProtection
 {
     private readonly string hosts;
-    private readonly EventStore events;
+    private readonly EventStore? events;
     private readonly object gate = new();
     private bool applied;
     private string evidence = "No managed hosts block installed";
     public bool Applied { get { lock (gate) return applied; } }
     public string Status { get { lock (gate) return evidence; } }
-    public DomainHostsProtection(EventStore events, string? hostsFile = null)
+    public DomainHostsProtection(EventStore? events, string? hostsFile = null)
     {
         this.events = events;
         hosts = hostsFile ?? Path.Combine(Environment.SystemDirectory, "drivers", "etc", "hosts");
@@ -127,7 +127,7 @@ public sealed class DomainHostsProtection
             Write(current, updated);
             applied = true;
             evidence = $"Opt-in: {Math.Min(1000, feed.Domains.Count)} or fewer exact hostnames sinkholed; unsigned mirror; cache/DoH may bypass; rollback on OFF";
-            events.Add(75, "Info", "Domain sinkhole enabled", "Administrator explicitly enabled the owned Windows hosts block; DNS-over-HTTPS and subdomains may bypass", true);
+            events?.Add(75, "Info", "Domain sinkhole enabled", "Administrator explicitly enabled the owned Windows hosts block; DNS-over-HTTPS and subdomains may bypass", true);
         }
     }
     public void Restore()
@@ -139,7 +139,7 @@ public sealed class DomainHostsProtection
             if (current != clean)
             {
                 Write(current, clean);
-                events.Add(75, "Info", "Domain sinkhole removed", "OTS-owned entries removed; unrelated hosts lines preserved");
+                events?.Add(75, "Info", "Domain sinkhole removed", "OTS-owned entries removed; unrelated hosts lines preserved");
             }
             applied = false;
             evidence = "No managed hosts block installed";
