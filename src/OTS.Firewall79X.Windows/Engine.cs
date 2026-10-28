@@ -253,5 +253,5 @@ public sealed class Engine : IDisposable
     }
     public void Dispose(){hostMonitor?.Dispose();deception?.Dispose();sensors?.Dispose();networkGuard?.Dispose();
         try{if(domainHosts.Applied)domainHosts.Restore();}catch(Exception ex){events.Add(75,"Warning","Domain restore failed on shutdown",ex.Message);}
-        domainFeed.Dispose();feed.Dispose();}
+        domainFeed.Dispose();feed.Dispose();checks.Dispose();}
 }

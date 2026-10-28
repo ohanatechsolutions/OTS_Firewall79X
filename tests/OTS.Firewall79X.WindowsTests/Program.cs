@@ -188,6 +188,21 @@ try
     }
     var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
+    var neighbors=NeighborInventory.Read();
+    if(string.IsNullOrEmpty(neighbors.Source)||neighbors.Entries.Count>4096)
+        throw new Exception("Neighbor inventory failed safety constraints");
+    var ids=DefenderNetworkIds.Read();
+    if(string.IsNullOrWhiteSpace(ids.Evidence))
+        throw new Exception("Defender provider must disclose availability or a clear failure");
+    using(var clock=new ClockDriftProbe())
+    {
+        var sample=clock.Sample();
+        if(string.IsNullOrWhiteSpace(sample.Evidence))
+            throw new Exception("Clock probe did not report evidence or unavailability");
+    }
+    var c14=status.Dashboard.Layers.Single(l=>l.Id==14);
+    if(c14.Mode==LayerMode.Enforcing)
+        throw new Exception("Section C must not claim OTS packet enforcement from native Defender events");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
     {
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(10));await pipe.ConnectAsync(timeout.Token);await Wire.WriteAsync(pipe,new Request("run-arbitrary-command"),timeout.Token);var unknown=await Wire.ReadAsync<Response>(pipe,4096,timeout.Token);if(unknown.Ok)throw new Exception("Unknown command accepted");
