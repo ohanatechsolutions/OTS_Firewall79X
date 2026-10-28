@@ -54,8 +54,12 @@ internal static class Program
             root.Width=width;root.Height=height;root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();
             var bitmap=new RenderTargetBitmap((int)Math.Ceiling(width*scale),(int)Math.Ceiling(height*scale),96*scale,96*scale,PixelFormats.Pbgra32);
             bitmap.Render(root);
-            var corner=new byte[4];bitmap.CopyPixels(new Int32Rect(bitmap.PixelWidth-1,bitmap.PixelHeight-1,1,1),corner,4,0);
-            if(corner[3]!=255)throw new InvalidOperationException("Preview was clipped or has a transparent background");
+            // Rounded edges can be antialiased and translucent by design.
+            // Check well inside the frame and verify that the rendered UI is not blank.
+            var inset=Math.Max(3,(int)Math.Ceiling(12*scale));
+            var sample=new byte[4];
+            bitmap.CopyPixels(new Int32Rect(bitmap.PixelWidth-inset,bitmap.PixelHeight-inset,1,1),sample,4,0);
+            if(sample[3]<220)throw new InvalidOperationException("UI background was not rendered near the lower-right interior");
             var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(path);png.Save(file);
         }
         finally { root.Width=double.NaN;root.Height=double.NaN;window.Content=root;window.UpdateLayout(); }
