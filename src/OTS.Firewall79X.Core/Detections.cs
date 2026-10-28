@@ -28,6 +28,27 @@ public static class Detections
         if(name.EndsWith(".pdf.exe")||name.EndsWith(".jpg.exe"))return "Executable with misleading double extension";
         return null;
     }
+    /// <summary>Detects manifest capabilities requiring human review. Does not
+    /// classify an extension as malware or attest its publisher signature.</summary>
+    public static bool BrowserManifestHasHighImpactPermissions(System.Text.Json.JsonElement manifest)
+    {
+        if(manifest.ValueKind!=System.Text.Json.JsonValueKind.Object)return false;
+        foreach(var property in new[]{"permissions","host_permissions","optional_permissions","optional_host_permissions"})
+        {
+            if(!manifest.TryGetProperty(property,out var entries)||
+               entries.ValueKind!=System.Text.Json.JsonValueKind.Array)continue;
+            foreach(var entry in entries.EnumerateArray())
+            {
+                if(entry.ValueKind!=System.Text.Json.JsonValueKind.String)continue;
+                var value=entry.GetString()??"";
+                if(value is "<all_urls>" or "*://*/*" or "http://*/*" or "https://*/*" ||
+                   new[]{"debugger","management","nativeMessaging","proxy","webRequestBlocking"}
+                       .Contains(value,StringComparer.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
     /// <summary>Strict, bounded indicators only. Returns categories, never source tokens.
     /// A match is not proof of an active or exploitable credential.</summary>
     public static IReadOnlyList<string> SecretKinds(string text)
