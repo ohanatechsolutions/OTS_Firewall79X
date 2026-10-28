@@ -28,6 +28,8 @@ The current preview is unsigned. Its build/install verification status is docume
 - Optional current-user filesystem, camera/microphone registry, clipboard-address, browser-extension inventory, and native Defender scan requests.
 - Selected-folder secret-indicator scan, optional Pwned Passwords range check, reports, authenticated encrypted report archives, and versioned selected-folder backups with verified non-overwriting restore.
 
+- Section B: isolated inert honeytokens with SHA-256 tamper checks, conditional audited Windows 4663 reads, unique local DNS/URL canaries, and a bounded localhost honeypot ([details](docs/DECEPTION.md)). No external canary endpoint or automatic IP bans are claimed.
+
 ## Desktop UI and branding
 
 The WPF client has seven dark slate (#0F172A / #1E293B) security screens, steel-blue (#34587C) accents, rounded glass-style cards, a live shield status badge, event feed, searchable security layers, high-contrast data grids, native dark window chrome and visible development-preview notices. The interface displays actual local service evidence rather than invented protection percentages. The original high-resolution supplied artwork lives in `src/OTS.Firewall79X.App/Assets/`: `Brand.png` is the in-app logo; `Brand.ico` is used by the Windows executable, title bar, recovery executable, installer, shortcuts and notification area. The earlier `AppLogo.png` and `AppIcon.ico` assets remain in the repository as alternate source artwork, without overriding active branding. This is a firewall product; the visual refresh does not add clipboard-history storage or synchronization. CI exercises all seven screens, a compact layout and layer search, and creates PNG previews in build artifacts.
