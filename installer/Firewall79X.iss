@@ -74,13 +74,18 @@ begin
   end;
 end;
 function InitializeUninstall(): Boolean;
+var ExitCode: Integer;
 begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop OTSFirewall79XWatchdog', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Sleep(2500);
   Result := RunChecked(ExpandConstant('{app}\recovery\OTS.Firewall79X.Recovery.exe'), '--uninstall --quiet');
   if not Result then MsgBox('Safe restoration failed. Uninstall has stopped so recovery files remain available.', mbError, MB_OK);
 end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var ExitCode: Integer;
 begin
-  if CurUninstallStep = usUninstall then
+  if CurUninstallStep = usUninstall then begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'delete OTSFirewall79X', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete OTSFirewall79XWatchdog', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  end;
 end;
