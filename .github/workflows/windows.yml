@@ -1,7 +1,9 @@
 name: Windows build and installation verification
 on:
   push:
-    branches: [main, build/windows-security-stack]
+    branches: [main, build/windows-security-stack, feat/section-g-self-protection-53-65]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
