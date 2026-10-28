@@ -58,7 +58,7 @@ public static class MaliciousDomainIntelligence
             throw new InvalidDataException("Missing publication time, empty data, or excessive invalid indicators");
         return new(stamp.Value, names, rejected);
     }
-    public static bool IsFresh(Snapshot snap, DateTimeOffset now) => snap.UpdatedUtc <= now.AddMinutes(10) && now - snap.UpdatedUtc <= TimeSpan.FromHours(48);
+    public static bool IsFresh(Snapshot snap, DateTimeOffset now) => snap.UpdatedUtc <= now.AddMinutes(10) && now - snap.UpdatedUtc <= TimeSpan.FromHours(12);
 }
 
 /// <summary>Pure, conservative owned-section editing. Never alters lines owned by others.</summary>
@@ -96,6 +96,8 @@ public static class ManagedHostsSection
     private static bool ValidManagedName(string s) => MaliciousDomainIntelligence.ValidDomain(s);
     public static string Remove(string original)
     {
+        if (!original.Contains(Begin, StringComparison.Ordinal) && !original.Contains(End, StringComparison.Ordinal))
+            return original; // No ownership: byte-equivalent content must remain untouched.
         var clean = WithoutOwnedSection(original);
         return original.Contains("\r\n", StringComparison.Ordinal) ? clean.Replace("\n", "\r\n") : clean;
     }
