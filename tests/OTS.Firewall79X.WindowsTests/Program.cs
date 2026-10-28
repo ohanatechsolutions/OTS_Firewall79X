@@ -24,6 +24,10 @@ try
     {
         if(admin)throw new Exception("This probe must use a nonadministrator token");
         foreach(var command in new[]{"on","off","pause","restore","report","selftest"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        var protectedKey=Path.Combine(Paths.Root,"logs","integrity.dpapi");
+        if(!File.Exists(protectedKey))throw new Exception("Machine-integrity key is not present");
+        try{_ = File.ReadAllBytes(protectedKey);throw new Exception("Unprivileged user read the protected integrity key");}
+        catch(UnauthorizedAccessException) { /* expected least-privilege boundary */ }
         return 0;
     }
     if(!admin)throw new Exception("Administrative integration probe expected");
@@ -54,6 +58,40 @@ try
     if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
     if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
     policy.Dispose();
+    if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")=="true")
+    {
+        // Integration regression: an attacker or external administrator may create a
+        // reserved-name rule. A prefix is not sufficient authority to delete it.
+        dynamic firewall=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        var spoofName=OwnedFirewallRule.InboundPrefix+"9.9.9.9";
+        dynamic spoof=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
+        try
+        {
+            spoof.Name=spoofName;
+            spoof.Description="External rule: never delete solely by reserved name";
+            spoof.Direction=1;spoof.Action=0;spoof.Protocol=256;
+            spoof.RemoteAddresses="9.9.9.9";spoof.Profiles=int.MaxValue;spoof.Enabled=true;
+            firewall.Rules.Add(spoof);
+            using(var guarded=new TemporaryFirewallGuard(new EventStore(
+                Path.Combine(Path.GetTempPath(),"ots-rule-preservation-ci-"+Guid.NewGuid().ToString("N")))))
+            {
+                guarded.Start();
+                if(!guarded.Operational)throw new Exception("Guard failed to initialize");
+            }
+            dynamic? stillPresent=firewall.Rules.Item(spoofName);
+            if(stillPresent==null)throw new Exception("Modified reserved-name rule was deleted by cleanup");
+            System.Runtime.InteropServices.Marshal.ReleaseComObject(stillPresent);
+        }
+        finally
+        {
+            try{firewall.Rules.Remove(spoofName);}
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(spoof);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(firewall);
+            }
+        }
+    }
     var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
