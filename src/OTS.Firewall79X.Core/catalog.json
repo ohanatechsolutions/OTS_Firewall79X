@@ -1,0 +1,476 @@
+[
+  {
+    "Id": 1,
+    "Name": "Default-Deny Inbound Firewall",
+    "Category": "Network Protection",
+    "Description": "Stateful inbound filtering that protects unsolicited inbound connections while preserving explicitly authorized services and required connectivity."
+  },
+  {
+    "Id": 2,
+    "Name": "Rate Limiting and Flood Protection",
+    "Category": "Network Protection",
+    "Description": "Protect against excessive connection attempts, SYN floods, ICMP abuse, UDP floods, and other detectable network-level resource abuse using supported Windows facilities."
+  },
+  {
+    "Id": 3,
+    "Name": "Port Scan Detection",
+    "Category": "Network Protection",
+    "Description": "Detect suspicious scanning behavior and apply safe, expiring source restrictions where reliable and supported."
+  },
+  {
+    "Id": 4,
+    "Name": "Anti-Spoofing and Malformed Packet Filtering",
+    "Category": "Network Protection",
+    "Description": "Detect or reject supported spoofed, malformed, or clearly invalid traffic without breaking legitimate fragmentation or network protocols."
+  },
+  {
+    "Id": 5,
+    "Name": "Threat-Intelligence IP Blocking",
+    "Category": "Network Protection",
+    "Description": "Integrate verified, reputable intelligence sources such as Spamhaus and abuse.ch. Apply high-confidence restrictions only, with freshness, false-positive, and essential-network safeguards."
+  },
+  {
+    "Id": 6,
+    "Name": "IPv6 Protection Parity",
+    "Category": "Network Protection",
+    "Description": "Ensure appropriate IPv6 monitoring and protection rather than securing only IPv4."
+  },
+  {
+    "Id": 7,
+    "Name": "Cloud Metadata Endpoint Protection",
+    "Category": "Network Protection",
+    "Description": "Protect access to cloud metadata addresses such as `169.254.169.254` when relevant. Avoid unnecessary system-wide changes on ordinary home PCs."
+  },
+  {
+    "Id": 8,
+    "Name": "DNS Rebinding Protection",
+    "Category": "Network Protection",
+    "Description": "Detect suspicious DNS responses that could expose local resources. Apply blocking only when supported safely and without breaking legitimate internal-domain resolution."
+  },
+  {
+    "Id": 9,
+    "Name": "Untrusted Network Protection",
+    "Category": "Network Protection",
+    "Description": "Recognize trusted and untrusted network profiles and apply safer inbound policies on public or unfamiliar Wi-Fi, including compatible Windows sharing controls."
+  },
+  {
+    "Id": 10,
+    "Name": "Bluetooth Security Monitoring",
+    "Category": "Network Protection",
+    "Description": "Monitor unexpected Bluetooth pairing, connections, and discoverability, applying supported reversible hardening where appropriate."
+  },
+  {
+    "Id": 11,
+    "Name": "Honeytokens and Canary Files",
+    "Category": "Deception",
+    "Description": "Create isolated decoy credentials and files, monitor access, and generate high-severity alerts. Never create functioning credentials or expose real secrets."
+  },
+  {
+    "Id": 12,
+    "Name": "Canary DNS and URLs",
+    "Category": "Deception",
+    "Description": "Implement local canary access monitoring and provide externally reachable canary functionality only when a suitable endpoint actually exists. Never claim off-machine monitoring from a purely local implementation."
+  },
+  {
+    "Id": 13,
+    "Name": "Decoy Services and Honeypots",
+    "Category": "Deception",
+    "Description": "Provide isolated, low-risk decoy listeners or simulated services on unused ports, with event capture, safety restrictions, and optional expiring source bans. Avoid exposing vulnerable real services."
+  },
+  {
+    "Id": 14,
+    "Name": "Intrusion Detection",
+    "Category": "Traffic Visibility",
+    "Description": "Integrate a Windows-compatible intrusion detection engine or equivalent established detection capability. Support validated detection rules and updates."
+  },
+  {
+    "Id": 15,
+    "Name": "Network Metadata and Attack Classification",
+    "Category": "Traffic Visibility",
+    "Description": "Collect available network telemetry and correlate relevant events to recognizable attack behaviors and MITRE ATT&CK techniques."
+  },
+  {
+    "Id": 16,
+    "Name": "Connection and DNS Journal",
+    "Category": "Traffic Visibility",
+    "Description": "Record supported per-process network connections and DNS observations. Detect unusual outbound destinations, tunneling indicators, and first-time connection behavior."
+  },
+  {
+    "Id": 17,
+    "Name": "ARP Spoofing Alerts",
+    "Category": "Traffic Visibility",
+    "Description": "Detect suspicious ARP changes and possible local-network interception attempts."
+  },
+  {
+    "Id": 18,
+    "Name": "Rogue DHCP and Evil-Twin Wi-Fi Detection",
+    "Category": "Traffic Visibility",
+    "Description": "Detect suspicious DHCP or wireless-network changes using telemetry actually available from Windows and the installed wireless adapter."
+  },
+  {
+    "Id": 19,
+    "Name": "Listening Port and Attack-Surface Monitor",
+    "Category": "Traffic Visibility",
+    "Description": "Identify listening ports and services. Alert when new services unexpectedly begin accepting connections."
+  },
+  {
+    "Id": 20,
+    "Name": "New LAN Device Alerts",
+    "Category": "Traffic Visibility",
+    "Description": "Observe and report newly discovered local-network devices using passive telemetry and safe network discovery where enabled."
+  },
+  {
+    "Id": 21,
+    "Name": "Unsafe Network Alerts",
+    "Category": "Traffic Visibility",
+    "Description": "Warn when connected to open, obsolete, or otherwise weakly secured wireless networks."
+  },
+  {
+    "Id": 22,
+    "Name": "Suspicious SMTP Activity",
+    "Category": "Traffic Visibility",
+    "Description": "Identify unexpected outbound SMTP activity from applications not normally associated with email transmission."
+  },
+  {
+    "Id": 23,
+    "Name": "Remote-Access Monitoring",
+    "Category": "Traffic Visibility",
+    "Description": "Detect newly enabled or installed remote-management services, including RDP, VNC, and recognizable remote-support applications."
+  },
+  {
+    "Id": 24,
+    "Name": "Clock Drift Monitoring",
+    "Category": "Traffic Visibility",
+    "Description": "Detect material system clock drift or suspicious time changes that could affect security verification and logs."
+  },
+  {
+    "Id": 25,
+    "Name": "Persistence and Software Installation Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Track new services, scheduled tasks, startup entries, browser extensions where accessible, and installed software or drivers."
+  },
+  {
+    "Id": 26,
+    "Name": "Rootkit and Kernel Driver Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Monitor suspicious driver installation and available Windows kernel-integrity indicators using supported APIs and established tools where bundled."
+  },
+  {
+    "Id": 27,
+    "Name": "Privilege Escalation Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Alert on new administrator accounts, unexpected privilege changes, security-policy changes, and suspicious elevation events."
+  },
+  {
+    "Id": 28,
+    "Name": "Camera and Microphone Access Alerts",
+    "Category": "Endpoint Monitoring",
+    "Description": "Use supported Windows privacy and device-access telemetry to identify unexpected camera or microphone activity."
+  },
+  {
+    "Id": 29,
+    "Name": "Cryptominer and Resource-Abuse Detection",
+    "Category": "Endpoint Monitoring",
+    "Description": "Detect patterns of suspicious sustained resource consumption, mining-related behavior, and unauthorized compute activity."
+  },
+  {
+    "Id": 30,
+    "Name": "Runtime and System Activity Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Use Windows Event Log, ETW, security auditing, and optionally bundled supported monitoring components to observe relevant runtime activity."
+  },
+  {
+    "Id": 31,
+    "Name": "Browser Credential and Session Protection",
+    "Category": "Endpoint Monitoring",
+    "Description": "Detect suspicious access to browser credential and session storage using available filesystem and process telemetry without reading or transmitting actual secrets unnecessarily."
+  },
+  {
+    "Id": 32,
+    "Name": "Clipboard Hijacking Detection",
+    "Category": "Endpoint Monitoring",
+    "Description": "Detect supported indicators of malicious clipboard modification, including unexpected changes to copied payment or cryptocurrency addresses. Preserve clipboard privacy."
+  },
+  {
+    "Id": 33,
+    "Name": "System Trust Configuration Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Watch trusted root certificates, proxy settings, hosts-file changes, and network or DNS configuration tampering."
+  },
+  {
+    "Id": 34,
+    "Name": "Bulk-Copy and Exfiltration Alerts",
+    "Category": "Endpoint Monitoring",
+    "Description": "Detect suspicious high-volume copying or movement of protected files where sufficient telemetry exists. Do not falsely claim complete visibility into encrypted cloud transfers."
+  },
+  {
+    "Id": 35,
+    "Name": "File and Binary Integrity Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Monitor selected system files, application binaries, startup configuration, and critical security settings. Alert on unexpected modifications."
+  },
+  {
+    "Id": 36,
+    "Name": "Suspicious Execution Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Detect relevant abuse patterns involving PowerShell, WMI, script hosts, suspicious command lines, process relationships, user-writable execution paths, disguised executables, and other detectable malicious execution behavior."
+  },
+  {
+    "Id": 37,
+    "Name": "Boot-Chain Integrity Monitoring",
+    "Category": "Endpoint Monitoring",
+    "Description": "Monitor available Secure Boot, TPM, boot-configuration, and startup-integrity indicators."
+  },
+  {
+    "Id": 38,
+    "Name": "Keylogger and Input-Hook Detection",
+    "Category": "Endpoint Monitoring",
+    "Description": "Detect suspicious input-monitoring behavior where supported. Clearly disclose any Windows telemetry limitations."
+  },
+  {
+    "Id": 39,
+    "Name": "Package and Software Source Integrity",
+    "Category": "Endpoint Monitoring",
+    "Description": "Monitor relevant software repositories, trusted publishers, package-source configuration, and certificate or update-source changes."
+  },
+  {
+    "Id": 40,
+    "Name": "Container Exposure Audit",
+    "Category": "Endpoint Monitoring",
+    "Description": "Check locally installed container platforms, where present, for exposed management interfaces, unsafe network publishing, and insecure permissions. Skip cleanly if none are installed."
+  },
+  {
+    "Id": 41,
+    "Name": "Brute-Force Protection",
+    "Category": "Access and Accounts",
+    "Description": "Detect repeated failed login attempts for supported local and remote services and apply safe restrictions where feasible, with trusted-access exclusions."
+  },
+  {
+    "Id": 42,
+    "Name": "SSH Hardening Audit",
+    "Category": "Access and Accounts",
+    "Description": "Audit OpenSSH configuration when installed, including root-equivalent access, password authentication, key security, and exposed services. Report-only by default."
+  },
+  {
+    "Id": 43,
+    "Name": "Credential Breach Checking",
+    "Category": "Access and Accounts",
+    "Description": "Provide an optional privacy-preserving credential breach-checking feature, using k-anonymity where supported. Remain idle without user-provided inputs; never upload plaintext passwords."
+  },
+  {
+    "Id": 44,
+    "Name": "Account Security Audit",
+    "Category": "Access and Accounts",
+    "Description": "Identify stale local accounts, insecure authentication policies, unexpected administrator access, and other detectable account-security weaknesses."
+  },
+  {
+    "Id": 45,
+    "Name": "Login and Privilege-Use Alerts",
+    "Category": "Access and Accounts",
+    "Description": "Monitor supported local logins, remote logins, failed authentication, and administrator elevation."
+  },
+  {
+    "Id": 46,
+    "Name": "Windows Security Hardening Audit",
+    "Category": "Hardening and Audits",
+    "Description": "Audit available protections such as ASLR, DEP, Secure Boot, TPM, Defender status, firewall profiles, encryption, password policy, device security, insecure permissions, and screen-lock configuration."
+  },
+  {
+    "Id": 47,
+    "Name": "Reversible Automatic Hardening",
+    "Category": "Hardening and Audits",
+    "Description": "Apply a narrow set of safe, validated Windows security improvements. Include appropriate AutoRun/AutoPlay, legacy-protocol, and built-in security checks. Every modification requires rollback support."
+  },
+  {
+    "Id": 48,
+    "Name": "Browser Security Audit",
+    "Category": "Hardening and Audits",
+    "Description": "Inspect supported browsers for detectable risky configuration, untrusted extensions, and missing security settings without unnecessarily collecting browsing history."
+  },
+  {
+    "Id": 49,
+    "Name": "External Exposure Assessment",
+    "Category": "Hardening and Audits",
+    "Description": "Report local exposure and optionally query available public exposure intelligence. Clearly distinguish internal observations from genuine externally verified scans."
+  },
+  {
+    "Id": 50,
+    "Name": "Secrets Hygiene Scanner",
+    "Category": "Hardening and Audits",
+    "Description": "Detect likely exposed credentials, private keys, and tokens in user-authorized files and development directories. Protect scan results and avoid retaining plaintext secrets."
+  },
+  {
+    "Id": 51,
+    "Name": "Remote Feature and Hardware Security Audit",
+    "Category": "Hardening and Audits",
+    "Description": "Audit supported management and remote-access capabilities such as Wake-on-LAN, Intel AMT where present, remote assistance, DMA-related settings, and exposed administrative interfaces."
+  },
+  {
+    "Id": 52,
+    "Name": "Updates and Vulnerability Assessment",
+    "Category": "Hardening and Audits",
+    "Description": "Detect missing Windows security updates and known vulnerabilities in identifiable software using verified vulnerability data. Report firmware and BIOS findings only where reliable information exists."
+  },
+  {
+    "Id": 53,
+    "Name": "Watchdog Service",
+    "Category": "Self-Protection",
+    "Description": "Monitor critical application components and safely restart failed services when appropriate."
+  },
+  {
+    "Id": 54,
+    "Name": "Dead-Man's Switch",
+    "Category": "Self-Protection",
+    "Description": "Detect when required protection services or the watchdog stop reporting health."
+  },
+  {
+    "Id": 55,
+    "Name": "Privilege Separation",
+    "Category": "Self-Protection",
+    "Description": "Separate ordinary UI components from privileged firewall management and protected configuration operations."
+  },
+  {
+    "Id": 56,
+    "Name": "Hostile Input Handling",
+    "Category": "Self-Protection",
+    "Description": "Safely parse untrusted filenames, event data, DNS names, logs, and other inputs. Use validation, isolation, fuzz testing, and least-privilege execution."
+  },
+  {
+    "Id": 57,
+    "Name": "Verified Security Updates and Feeds",
+    "Category": "Self-Protection",
+    "Description": "Validate update authenticity and integrity using appropriate signing and verification mechanisms. Reject corrupted or untrusted updates."
+  },
+  {
+    "Id": 58,
+    "Name": "Supply-Chain Protection",
+    "Category": "Self-Protection",
+    "Description": "Pin dependencies, verify build inputs, generate an SBOM, and run vulnerability checks against the application's software dependencies."
+  },
+  {
+    "Id": 59,
+    "Name": "Rule Safety Guard",
+    "Category": "Self-Protection",
+    "Description": "Check active security rules against expected configuration, identify unsafe deviations, and coordinate safe rollback without overwriting legitimate third-party changes."
+  },
+  {
+    "Id": 60,
+    "Name": "Alert Pipeline",
+    "Category": "Self-Protection",
+    "Description": "Provide desktop notifications, severity levels, duplicate suppression, alert history, and summaries. External messaging integrations are optional and must not be required."
+  },
+  {
+    "Id": 61,
+    "Name": "Secure Structured Logging",
+    "Category": "Self-Protection",
+    "Description": "Provide structured logs, retention controls, rotation, compression, bounded storage, and tamper-evident protections where feasible."
+  },
+  {
+    "Id": 62,
+    "Name": "Resource Governor",
+    "Category": "Self-Protection",
+    "Description": "Continuously manage the workload of heavyweight scanners, traffic analysis, and monitoring based on CPU, memory, disk usage, and battery state."
+  },
+  {
+    "Id": 63,
+    "Name": "Threat Feed Freshness",
+    "Category": "Self-Protection",
+    "Description": "Monitor intelligence and detection-rule age. Identify missing, stale, corrupted, or failed updates."
+  },
+  {
+    "Id": 64,
+    "Name": "Protected Secrets Storage",
+    "Category": "Self-Protection",
+    "Description": "Use Windows DPAPI, Credential Manager, or supported system cryptography to protect application secrets and keys."
+  },
+  {
+    "Id": 65,
+    "Name": "UI and Privileged Service Access Protection",
+    "Category": "Self-Protection",
+    "Description": "Restrict administrative operations through proper Windows access control, authenticated IPC, authorization checks, and abuse prevention."
+  },
+  {
+    "Id": 66,
+    "Name": "Forensic Snapshot",
+    "Category": "Response and Reporting",
+    "Description": "On selected high-severity events, securely preserve available process, connection, system-state, and recent event evidence."
+  },
+  {
+    "Id": 67,
+    "Name": "Security Posture Score",
+    "Category": "Response and Reporting",
+    "Description": "Calculate a transparent 0\u2013100 security score with weighted categories, explanations, data-confidence indicators, and actionable recommendations."
+  },
+  {
+    "Id": 68,
+    "Name": "Encrypted Versioned Backups",
+    "Category": "Response and Reporting",
+    "Description": "Provide encrypted, versioned backups with restore verification. Prefer an independently protected destination when available. Clearly explain when backups remain vulnerable because they reside on the same machine."
+  },
+  {
+    "Id": 69,
+    "Name": "Offline Recovery Kit",
+    "Category": "Response and Reporting",
+    "Description": "Generate recovery scripts, configuration exports, and printable instructions. Create bootable recovery media only when compatible media, authorized software, and the required Windows components are available."
+  },
+  {
+    "Id": 70,
+    "Name": "Resilient Log Export",
+    "Category": "Response and Reporting",
+    "Description": "Support encrypted export and shipping to a configured external destination. Without an external destination, retain bounded local archives and report that off-device protection is not configured."
+  },
+  {
+    "Id": 71,
+    "Name": "Automated Regression Tests",
+    "Category": "Response and Reporting",
+    "Description": "Test layer behavior, configuration safety, recovery, rule preservation, and compatibility after software updates."
+  },
+  {
+    "Id": 72,
+    "Name": "Quarterly Security Reports",
+    "Category": "Response and Reporting",
+    "Description": "Generate scheduled reports showing security posture trends, detection activity, layer health, major alerts, and recommended improvements."
+  },
+  {
+    "Id": 73,
+    "Name": "Firewall Conflict and Shadowing Analysis",
+    "Category": "Response and Reporting",
+    "Description": "Detect duplicate, conflicting, shadowed, ineffective, or overly permissive security rules using supported Windows policy representations."
+  },
+  {
+    "Id": 74,
+    "Name": "Security Documentation Generator",
+    "Category": "Response and Reporting",
+    "Description": "Automatically produce a readable report of all 79 layers, supported capabilities, enabled protections, limitations, and current configuration."
+  },
+  {
+    "Id": 75,
+    "Name": "Known-Malicious Domain Blocking",
+    "Category": "Additional Coverage",
+    "Description": "Block validated high-confidence malicious domains when a safe Windows-compatible DNS or network enforcement method exists. Preserve legitimate system resolution and support observation before enforcement."
+  },
+  {
+    "Id": 76,
+    "Name": "Download and Temporary File Malware Scanning",
+    "Category": "Additional Coverage",
+    "Description": "Scan new files in Downloads, temporary folders, and removable drives using appropriately integrated scanning capabilities. Apply quarantine only when detection confidence and file-recovery safeguards justify it."
+  },
+  {
+    "Id": 77,
+    "Name": "USB and Removable Device Alerts",
+    "Category": "Additional Coverage",
+    "Description": "Notify when new storage and input devices appear. Never automatically block or disable essential keyboards, mice, or other input devices."
+  },
+  {
+    "Id": 78,
+    "Name": "Ransomware Behavior Monitoring",
+    "Category": "Additional Coverage",
+    "Description": "Detect suspicious mass file changes, unusual renaming, and access to protected ransomware canary files. Alert by default, without aggressive automatic process termination."
+  },
+  {
+    "Id": 79,
+    "Name": "Beaconing Detection",
+    "Category": "Additional Coverage",
+    "Description": "Analyze available network connection history for suspicious recurring outbound communications and other recognizable command-and-control beaconing indicators."
+  }
+]

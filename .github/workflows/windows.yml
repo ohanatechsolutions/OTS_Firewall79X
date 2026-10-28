@@ -1,0 +1,68 @@
+name: Windows build and installation verification
+on:
+  push:
+    branches: [main, build/windows-security-stack]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '10.0.403'
+      - name: Build, test, and compile installer
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Install, exercise, upgrade, and uninstall
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1
+      - name: Dependency vulnerability inventory
+        if: always()
+        shell: pwsh
+        run: dotnet list OTS.Firewall79X.sln package --vulnerable --include-transitive --format json | Out-File artifacts/vulnerability-report.json
+      - name: Enforce dependency gate and include test evidence
+        shell: pwsh
+        run: ./scripts/finalize.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: OTS-Firewall79X-Windows-x64
+          path: |
+            artifacts/release/
+            artifacts/*test-results.json
+            artifacts/windows-observed-status.json
+            artifacts/vulnerability-report.json
+            artifacts/*.log
+          if-no-files-found: error
+          retention-days: 30
+
+  development-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: OTS-Firewall79X-Windows-x64
+          path: downloaded
+      - name: Publish verified development prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "v0.1.0-preview.${GITHUB_RUN_NUMBER}" downloaded/release/* \
+            --target "$RELEASE_COMMIT" --prerelease \
+            --title "OTS Firewall79X 0.1.0 — incomplete development preview" \
+            --notes-file downloaded/release/RELEASE_NOTES.md
