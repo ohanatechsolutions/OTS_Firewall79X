@@ -80,10 +80,15 @@ public static class SectionFAudits
         }
         catch(Exception ex)when(ex is DllNotFoundException or EntryPointNotFoundException or SEHException)
         {findings.Add("Account policy provider unavailable");}
-        var vbs=SystemQueries.Wmi(@"root\Microsoft\Windows\DeviceGuard",
-            "SELECT VirtualizationBasedSecurityStatus FROM Win32_DeviceGuard","VirtualizationBasedSecurityStatus");
-        findings.Add(vbs.Count>0?"VBS status code: "+vbs[0]["VirtualizationBasedSecurityStatus"]+" (0=off, 1=enabled, 2=running)"
-            :"VBS/Device Guard state unavailable");
+        try
+        {
+            var vbs=SystemQueries.Wmi(@"root\Microsoft\Windows\DeviceGuard",
+                "SELECT VirtualizationBasedSecurityStatus FROM Win32_DeviceGuard","VirtualizationBasedSecurityStatus");
+            findings.Add(vbs.Count>0?"VBS status code: "+vbs[0]["VirtualizationBasedSecurityStatus"]+" (0=off, 1=enabled, 2=running)"
+                :"VBS/Device Guard state unavailable");
+        }
+        catch(Exception ex)when(ex is System.Management.ManagementException or UnauthorizedAccessException or COMException or System.Security.SecurityException)
+        {findings.Add("VBS/Device Guard provider unavailable: "+ex.GetType().Name);}
         // Windows service is not the interactive user: do not claim a user screen lock is verified.
         return string.Join("; ",findings);
     }
