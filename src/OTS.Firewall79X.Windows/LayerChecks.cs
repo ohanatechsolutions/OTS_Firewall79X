@@ -213,11 +213,21 @@ public sealed class LayerChecks
                 var accounts=SystemQueries.Wmi("root\\cimv2","SELECT Name,Disabled,PasswordRequired FROM Win32_UserAccount WHERE LocalAccount=True","Name","Disabled","PasswordRequired");int weak=accounts.Count(a=>a["Disabled"]=="False"&&a["PasswordRequired"]=="False");Changed(id,"Local account state",accounts);return weak>0?Bad(id,$"{weak} enabled accounts do not require passwords", "Account policy flags do not establish actual password strength or staleness."):Good(id,$"{accounts.Count} local accounts audited",LayerMode.Auditing,"Does not inspect password contents, domain policies, or account staleness.");
             case 45:return Channel(id,"Security","Monitors login, failed login, and special-privilege assignment events.");
             case 46:
-                var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
+                var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender",
+                    "SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus",
+                    "AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
                 var hardening=HostHardeningAudit.Read();var hardware=DeviceStatus();
-                if(defender==null)return Missing(id,"Microsoft Defender status is unavailable; "+hardening.Summary+"; "+SectionFAudits.HostEvidence()+"; "+hardware.Evidence);
-                bool active=defender["AntivirusEnabled"]=="True"&&defender["RealTimeProtectionEnabled"]=="True";
-                return active?Good(id,"Defender real-time protection enabled; "+hardening.Summary+"; "+hardware.Evidence,LayerMode.Auditing,"OS encryption and TPM observations are provider-dependent. Full ASLR, key recovery policy, security patching and boot attestation remain unverified."):Bad(id,"Defender real-time protection is not confirmed; "+hardening.Summary+"; "+hardware.Evidence,"May reflect a different antivirus product. No Windows security settings are changed.");
+                var additional=SectionFAudits.HostEvidence();
+                var defenderStatus=defender==null?"Defender provider unavailable (other AV may be in use)":
+                    $"Defender real-time={defender["RealTimeProtectionEnabled"]}, enabled={defender["AntivirusEnabled"]}";
+                var hostSummary=defenderStatus+"; "+hardening.Summary+"; "+additional+"; "+hardware.Evidence;
+                if(defender==null)return Missing(id,hostSummary+"; endpoint antivirus state unknown");
+                var weak=defender["AntivirusEnabled"]!="True"||defender["RealTimeProtectionEnabled"]!="True"||
+                    !hardening.UacEnabled||!hardening.DepEnabled||hardening.LsaProtected==false||
+                    hardening.Smb1Disabled==false||hardware.TpmEnabled==false||hardware.OsVolumeProtected==false;
+                return new(id,LayerMode.Auditing,false,hostSummary,
+                    (weak?"One or more checks are weak/unknown; also: ":"Observed controls do not complete the full specification; ")+
+                    "Machine-wide ASLR, effective account/domain policy, real current-user lock screen, insecure ACLs, encryption recovery and TPM/firmware attestation are not validated. A separate AV product may replace Defender.");
             case 47:
                 var policyPath=@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
                 var autoRun=SystemQueries.Reg(policyPath,"NoDriveTypeAutoRun") is int a&&a==255;
