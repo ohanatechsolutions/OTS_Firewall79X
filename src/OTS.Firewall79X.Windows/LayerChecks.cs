@@ -133,11 +133,13 @@ public sealed class LayerChecks
             case 25:
                 var services=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,StartMode FROM Win32_Service","Name","PathName","StartMode");
                 var tasks=EndpointInventory.ScheduledTasks();var startup=EndpointInventory.UserStartup();
+                var extensions=EndpointInventory.BrowserExtensions();
                 Changed(id,"Service persistence",services);Changed(id,"Machine startup entries",SystemQueries.Startup());
                 Changed(id,"Loaded user startup",startup);Changed(id,"Scheduled task files",tasks);
+                Changed(id,"Browser extension directories",extensions);
                 Changed(id,"Installed software",SystemQueries.InstalledSoftware());
-                return Good(id,$"{services.Count} services; {tasks.Count} task definitions; {startup.Count} loaded-user startup entries",LayerMode.Monitoring,
-                    "Snapshot-only; unloaded user hives, browser extension installs and transient tasks can be missed. Task files do not prove effective task configuration.");
+                return Good(id,$"{services.Count} services; {tasks.Count} task definitions; {startup.Count} loaded-user startup entries; {extensions.Count} browser extensions inventoried",LayerMode.Monitoring,
+                    "Snapshot-only; unloaded user hives, managed browser policies, transient tasks and some browsers remain out of scope. Extension directory presence is not evidence of maliciousness.");
             case 26:
                 var drivers=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,State FROM Win32_SystemDriver","Name","PathName","State");Changed(id,"Kernel driver inventory",drivers);
                 return Good(id,$"{drivers.Count} system drivers inventoried",LayerMode.Monitoring,"Driver changes and enabled CodeIntegrity events; no memory rootkit scanner or kernel attestation.");
