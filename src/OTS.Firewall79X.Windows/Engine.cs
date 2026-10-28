@@ -12,7 +12,7 @@ public sealed class Engine : IDisposable
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
     private readonly Dictionary<int,LayerResult> inventoryCache=[];
-    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,39,44,46,51,52];
+    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,37,39,44,46,51,52];
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));

@@ -132,5 +132,14 @@ Test("Container management API exposure distinguishes wildcard IPv4/IPv6 from lo
     Assert(ContainerManagementAudit.ParseListeningAddress("[::]:443")==null);
     Assert(ContainerManagementAudit.Analyze(new[]{"[127.0.0.1]:2376"},true).PlaintextCandidates==0);
 });
+Test("TPM and BitLocker unknown-state handling",()=>{
+    Assert(SecurityDeviceStates.TpmEnabled("True","True")==true);
+    Assert(SecurityDeviceStates.TpmEnabled("True","False")==false);
+    Assert(SecurityDeviceStates.TpmEnabled("False","True")==false);
+    Assert(SecurityDeviceStates.TpmEnabled(null,"True")==null);
+    Assert(SecurityDeviceStates.VolumeProtected("1")==true);
+    Assert(SecurityDeviceStates.VolumeProtected("0")==false);
+    Assert(SecurityDeviceStates.VolumeProtected("2")==null);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}

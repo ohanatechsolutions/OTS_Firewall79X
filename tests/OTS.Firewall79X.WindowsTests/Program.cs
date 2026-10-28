@@ -42,6 +42,9 @@ try
     var integrity=status.Dashboard.Layers.Single(l=>l.Id==61);
     if(integrity.Mode==LayerMode.Unavailable || !integrity.Evidence.Contains("HMAC-authenticated"))
         throw new Exception("Stored log-integrity verification not operational: "+integrity.Evidence);
+    var hardware=SecurityDeviceAudit.Read();
+    if(!hardware.Evidence.Contains("TPM:")||!hardware.Evidence.Contains("OS drive protection:"))
+        throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
     {

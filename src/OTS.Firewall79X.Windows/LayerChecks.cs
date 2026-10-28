@@ -13,6 +13,8 @@ public sealed class LayerChecks
     public EventSensors? Sensors {get;set;}
     public FeodoThreatFeed? ThreatFeed {get;set;}
     private readonly HashSet<string> intelAlerts=[];
+    private SecurityDeviceAudit.Result? deviceSnapshot;
+    private SecurityDeviceAudit.Result DeviceStatus()=>deviceSnapshot??=SecurityDeviceAudit.Read();
     public List<Connection> Connections {get;private set;}=[];
     public string? NetworkError {get;private set;}
     public FirewallAudit? Firewall {get;}=new();
@@ -20,7 +22,7 @@ public sealed class LayerChecks
     public LayerChecks(EventStore events){this.events=events;}
     public void Prepare()
     {
-        firewall=null;NetworkError=null;
+        firewall=null;NetworkError=null;deviceSnapshot=null;
         try{Connections=NetworkTables.Connections();TrackNetwork();TrackIntel();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
         try{firewall=Firewall!.Read();}catch(Exception ex){events.Add(1,"Warning","Firewall query failed",ex.Message);}
     }
@@ -166,7 +168,11 @@ public sealed class LayerChecks
             case 36:return Channel(id,"Security","Examines process-creation command lines where already audited; detects a narrow set of encoded PowerShell and remote script execution indicators.");
             case 37:
                 var secure=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State","UEFISecureBootEnabled");
-                return secure is int v? (v==1?Good(id,"Secure Boot registry indicator is enabled",LayerMode.Auditing,"This is configuration evidence, not measured boot attestation."):Bad(id,"Secure Boot is disabled")):Missing(id,"Secure Boot state not reported by this host");
+                var deviceState=DeviceStatus();
+                if(secure is not int v)return Missing(id,"Secure Boot state unavailable; "+deviceState.Evidence);
+                if(v!=1)return Bad(id,"Secure Boot disabled; "+deviceState.Evidence,"TPM and OS encryption are read-only observations, not boot-chain attestation.");
+                if(deviceState.TpmEnabled==false)return Bad(id,"Secure Boot enabled, TPM disabled/inactive; "+deviceState.Evidence,"Read-only WMI and registry evidence; firmware and boot attestations still needed.");
+                return Good(id,"Secure Boot enabled; "+deviceState.Evidence,LayerMode.Auditing,"Unknown TPM/encryption does not establish protection. No measured-boot attestation or firmware integrity verification.");
             case 38:return Missing(id,"Reliable cross-process keylogger/input-hook inspection is not implemented; no claim of keylogger protection.");
             case 39:
                 Changed(id,"Trusted publisher roots",SystemQueries.RootCertificates());Changed(id,"Software source inventory",SystemQueries.InstalledSoftware());
@@ -203,10 +209,10 @@ public sealed class LayerChecks
             case 45:return Channel(id,"Security","Monitors login, failed login, and special-privilege assignment events.");
             case 46:
                 var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
-                var hardening=HostHardeningAudit.Read();
-                if(defender==null)return Missing(id,"Microsoft Defender status is unavailable; "+hardening.Summary);
+                var hardening=HostHardeningAudit.Read();var hardware=DeviceStatus();
+                if(defender==null)return Missing(id,"Microsoft Defender status is unavailable; "+hardening.Summary+"; "+hardware.Evidence);
                 bool active=defender["AntivirusEnabled"]=="True"&&defender["RealTimeProtectionEnabled"]=="True";
-                return active?Good(id,"Defender real-time protection enabled; "+hardening.Summary,LayerMode.Auditing,"UAC, DEP, and LSA indicators are read-only partial checks; an absent/unsupported value is not reported as protected. No broad ASLR, BitLocker or patch verification."):Bad(id,"Defender real-time protection is not confirmed; "+hardening.Summary,"May reflect a different antivirus product. Existing security settings are never automatically changed.");
+                return active?Good(id,"Defender real-time protection enabled; "+hardening.Summary+"; "+hardware.Evidence,LayerMode.Auditing,"OS encryption and TPM observations are provider-dependent. Full ASLR, key recovery policy, security patching and boot attestation remain unverified."):Bad(id,"Defender real-time protection is not confirmed; "+hardening.Summary+"; "+hardware.Evidence,"May reflect a different antivirus product. No Windows security settings are changed.");
             case 47:return SystemQueries.Reg(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer","NoDriveTypeAutoRun") is int autorun&&autorun==255?Good(id,"AutoRun disabled for drive types; journaled restoration available",LayerMode.Enforcing,"Narrow hardening scope; legacy protocols and other policies are not automatically changed."):Bad(id,"AutoRun hardening is not applied or was changed externally");
             case 48:return Missing(id,"Browser audit requires the interactive-user collector");
             case 50:return new(id,LayerMode.Idle,false,"Select a folder in the desktop interface to scan for likely secrets","Reads only the selected tree within budgets; reports secret type and file location, never matched plaintext.");
