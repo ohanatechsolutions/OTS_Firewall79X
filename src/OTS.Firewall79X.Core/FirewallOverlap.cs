@@ -28,17 +28,20 @@ public static class FirewallOverlap
         int broad = rules.Count(r => r.Direction == "1" && r.Action == "1" &&
             Any(r.RemoteAddresses) && Any(r.LocalPorts) && string.IsNullOrWhiteSpace(r.Application));
         int potential = 0;
-        for (int i = 0; i < rules.Length; i++)
-            for (int j = i + 1; j < rules.Length; j++)
+        for (int i = 0; i < rules.Length && potential < 1000; i++)
+            for (int j = i + 1; j < rules.Length && potential < 1000; j++)
             {
                 var a = rules[i]; var b = rules[j];
                 if (Key(a) == Key(b)) continue; // reported as exact duplicate
+                if (a.Direction == b.Direction && a.Protocol == b.Protocol &&
+                    a.LocalPorts == b.LocalPorts && a.RemoteAddresses == b.RemoteAddresses &&
+                    a.Profiles == b.Profiles && a.Application == b.Application) continue; // exact opposing match
                 if (a.Direction != b.Direction || !ProtocolOverlaps(a.Protocol, b.Protocol)
                     || !ProfilesOverlap(a.Profiles, b.Profiles)
                     || !ApplicationOverlaps(a.Application, b.Application)) continue;
                 if (!PortsOverlap(a.LocalPorts, b.LocalPorts) || !AddressesOverlap(a.RemoteAddresses, b.RemoteAddresses)) continue;
                 potential++;
-                if (potential >= 1000) { truncated = true; break; }
+                if (potential >= 1000) truncated = true;
             }
         return new(rules.Length, duplicates, exact, potential, broad, truncated,
             "Potential overlap is not proven shadowing: WFP, GPO precedence, rule interfaces/services, " +
