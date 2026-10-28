@@ -25,7 +25,9 @@ The current preview is unsigned. Its build/install verification status is docume
 - Automatic when protection is ON: read-only HTTPS Feodo Tracker recommended IPv4 C2 intelligence: bounded and date-validated input, periodic refresh, matching against observed established TCP destinations, and high-priority alerts. A fresh, observed matching destination can receive a five-minute, exact-IP outbound deny rule. No full-feed proactive block or signing authenticity is claimed. Stale or unavailable intelligence causes cleanup of owned intelligence rules during normal service operation.
 - Conditional Windows DNS Client Event 3008 query-result correlation: warns when the same external domain quickly changes from a public to a private/local address (layer 8), without blocking or changing DNS. Split-DNS/VPN setups can produce legitimate alerts. The DNS channel is not silently enabled.
 - Conditional native Windows Event 4663 file-read telemetry for browser credential/session storage (layer 31) and per-process high-volume file-read alerts (layer 34), **only where existing Windows Audit File System policy and matching SACLs generate events**. No secrets or file contents are collected; neither detector proves exfiltration.
-- Optional current-user filesystem, camera/microphone registry, clipboard-address, browser-extension inventory, and native Defender scan requests.
+- Background Section I collectors: Downloads and local Temp file-change scanning through installed Microsoft Defender; removable-drive monitoring; WMI USB connection alerts; lossy ransomware-like destructive file-change bursts; and conservative per-process TCP beacon-timing indicators. Service-backed sensors remain active while OTS is enabled, even if the desktop window closes; none guarantees malware prevention.
+- Current domain-intelligence observations and optional **administrator-approved** exact-host Windows hosts sinkhole (up to 1,000 names) from a dated **unsigned third-party URLhaus-derived mirror**. Domain blocking is OFF by default, offers allowlist entries and owned-section rollback, and may be bypassed by DoH/direct IP; it does not replace a network firewall.
+- Optional current-user camera/microphone registry, clipboard-address, browser-extension, and extra filesystem observations; interactive-only features stop when the desktop app closes.
 - Selected-folder secret-indicator scan, optional Pwned Passwords range check, reports, authenticated encrypted report archives, and versioned selected-folder backups with verified non-overwriting restore.
 
 - Section B: isolated inert honeytokens with SHA-256 tamper checks, conditional audited Windows 4663 reads, unique local DNS/URL canaries, and a bounded localhost honeypot ([details](docs/DECEPTION.md)). No external canary endpoint or automatic IP bans are claimed.
@@ -40,9 +42,9 @@ x64 Windows 11, or compatible Windows 10 builds (installer minimum 1809). Micros
 
 ## Controls and status
 
-ON starts the service collectors and journaled AutoRun hardening. OFF and Restore undo only settings still equal to OTS-applied values. Pause records a 15-minute deadline. Existing independent Windows security remains active when OTS is off. The preview deliberately reports **Partially Protected** while features remain incomplete. Capability score measures declared layer health, not a probability of protection. Actual OTS packet-drop count remains zero unless independently attributed: installing a temporary restriction is **not** proof that a later packet was dropped. Existing Windows blocks and OTS-installed rule changes are separately described in events. Temporary OTS rules require normal service cleanup; a hard crash may leave them until recovery.
+ON starts the service collectors and journaled AutoRun hardening. OFF and Restore undo only settings still equal to OTS-applied values. Pause records a 15-minute deadline. Existing independent Windows security remains active when OTS is off. The preview deliberately reports **Partially Protected** while features remain incomplete. Capability score measures declared layer health, not a probability of protection. Actual OTS packet-drop count remains zero unless independently attributed: installing a temporary restriction is **not** proof that a later packet was dropped. Existing Windows blocks and OTS-installed rule changes are separately described in events. Temporary OTS rules require normal service cleanup; a hard crash may leave them until recovery. Optional domain hostname mappings are tracked separately and are not counted as packet drops.
 
-Interactive monitors require the app to remain open and the opt-in checkbox. No clipboard contents or plaintext matched secrets are written to logs. Reports can include IP addresses and file locations. Protected service data is stored under ProgramData/Ohana Tech Solutions/Firewall79X, with SYSTEM/administrators-only access.
+Interactive-only camera/clipboard/browser monitors require the app to remain open and the opt-in checkbox; Section I background service sensors are separate. No clipboard contents or plaintext matched secrets are written to logs. Reports can include IP addresses and file locations. Protected service data is stored under ProgramData/Ohana Tech Solutions/Firewall79X, with SYSTEM/administrators-only access.
 
 ## Recovery and uninstall
 
@@ -52,7 +54,7 @@ Use **Settings & Recovery → Restore previous configuration**, or the separate 
 
 Build requirements apply to contributors, not installed users: pinned .NET SDK 10.0.403 and Inno Setup 6 on Windows. Run `scripts/build.ps1`; `scripts/windows-smoke.ps1` is restricted to disposable GitHub Actions runners. Dependencies are locked. `dotnet run --project tests/OTS.Firewall79X.Tests -c Release` executes core regressions. CI produces an installer, release ZIP, SBOM, checksums, build manifest, screen previews, and real test result files.
 
-See [architecture](docs/ARCHITECTURE.md), [limitations](KNOWN_LIMITATIONS.md), [dependencies](EXTERNAL_TOOLS.md), and [security reporting](SECURITY.md).
+See [architecture](docs/ARCHITECTURE.md), [Section I coverage](docs/SECTION_I_IMPLEMENTATION.md), [limitations](KNOWN_LIMITATIONS.md), [dependencies](EXTERNAL_TOOLS.md), and [security reporting](SECURITY.md).
 
 ## Network protection implementation notes
 

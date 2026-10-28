@@ -374,5 +374,53 @@ Test("Audited canary file access requires exact 4663 object identity and rights"
     Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"bad").Read);
     Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"0x80").Read);
 });
+Test("URLhaus domain parser validates header, exact names and source freshness",()=>{
+    var now=DateTimeOffset.UtcNow;
+    var header="# abuse.ch URLhaus Host file #\n# Last updated: "+now.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss",System.Globalization.CultureInfo.InvariantCulture)+" (UTC) #\n";
+    var feed=MaliciousDomainIntelligence.Parse(header+"127.0.0.1 evil-domain.example.net\n127.0.0.1 malicious-mirror.example.org\n127.0.0.1 evil-domain.example.net\n");
+    Assert(feed.Domains.Count==2&&MaliciousDomainIntelligence.IsFresh(feed,now));
+    Assert(!MaliciousDomainIntelligence.IsFresh(feed,now.AddDays(3)));
+    Assert(!MaliciousDomainIntelligence.IsFresh(feed,now.AddHours(13)));
+    var online="# Title: Online Malicious Hosts Blocklist\n# Updated: "+now.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ",System.Globalization.CultureInfo.InvariantCulture)+"\n# Expires: 12 hours (update frequency)\n# Source: https://urlhaus.abuse.ch/api/\n0.0.0.0 a.test-malicious.example.net\n0.0.0.0 b.test-malicious.example.org\n";
+    Assert(MaliciousDomainIntelligence.Parse(online).Domains.Count==2);
+    Assert(ManagedHostsSection.Remove("# other\n1.2.3.4 example.internal\r\n")=="# other\n1.2.3.4 example.internal\r\n");
+    Assert(!MaliciousDomainIntelligence.ValidDomain("microsoft.com")&&!MaliciousDomainIntelligence.ValidDomain("x.github.com"));
+    Assert(!MaliciousDomainIntelligence.ValidDomain("abc..org")&&!MaliciousDomainIntelligence.ValidDomain("127.0.0.1"));
+    Assert(MaliciousDomainIntelligence.ValidDomain("evil-domain.example.net"));
+    Throws<InvalidDataException>(()=>MaliciousDomainIntelligence.Parse("127.0.0.1 evil-domain.example.net"));
+    Throws<InvalidDataException>(()=>MaliciousDomainIntelligence.Parse(header+"not-an-ip malformed.bad\n"));
+    Throws<InvalidDataException>(()=>MaliciousDomainIntelligence.Parse(header+"127.0.0.1 google.com\n"));
+});
+Test("Managed hosts changes preserve external lines and rollback exact owned region",()=>{
+    var original="# keep this line\r\n192.168.1.5 intranet.corp\r\n";
+    var applied=ManagedHostsSection.Apply(original,["a.bad-domain.example.net","b.bad-domain.example.net","google.com"],["b.bad-domain.example.net"]);
+    Assert(applied.Contains("0.0.0.0 a.bad-domain.example.net")&&!applied.Contains("b.bad-domain.example.net"));
+    Assert(applied.Contains("192.168.1.5 intranet.corp"));
+    Assert(ManagedHostsSection.Remove(applied)==original);
+    Assert(ManagedHostsSection.Remove(ManagedHostsSection.Remove(applied))==original);
+    var external=applied+"1.2.3.4 external.intranet\r\n";
+    Assert(ManagedHostsSection.Remove(external).Contains("external.intranet"));
+    Throws<InvalidDataException>(()=>ManagedHostsSection.Remove(applied.Replace("0.0.0.0 a.bad-domain.example.net","5.6.7.8 a.bad-domain.example.net")));
+    Throws<InvalidDataException>(()=>ManagedHostsSection.Apply(original,["evil-domain.example.net"],["invalid..entry"]));
+});
+Test("Ransomware burst requires destructive distinct changes, ignores repeated notifications",()=>{
+    var tracker=new RansomwareActivity();var now=DateTimeOffset.UtcNow;
+    for(int i=0;i<50;i++)Assert(!tracker.Observe("C:/data/"+i+".txt",WatcherChangeTypes.Changed,now.AddMilliseconds(i*30)));
+    bool alarm=false;
+    for(int i=0;i<60;i++)alarm|=tracker.Observe("C:/other/"+i+".locked",WatcherChangeTypes.Renamed,now.AddSeconds(2).AddMilliseconds(i*50));
+    Assert(alarm);
+    Assert(!tracker.Observe("C:/other/60.locked",WatcherChangeTypes.Renamed,now.AddSeconds(5)));
+    var duplicate=new RansomwareActivity();
+    for(int i=0;i<100;i++)Assert(!duplicate.Observe("C:/same.file",WatcherChangeTypes.Deleted,now.AddMilliseconds(i*40)));
+});
+Test("Beacon detector demands sufficient regularity and suppresses expected background tasks",()=>{
+    var now=DateTimeOffset.UtcNow;
+    var periodic=Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*60)).ToArray();
+    Assert(BeaconAnalysis.Suspicious("unknown-app",periodic));
+    Assert(!BeaconAnalysis.Suspicious("chrome",periodic));
+    Assert(!BeaconAnalysis.Suspicious("unknown-app",periodic.Take(5).ToArray()));
+    Assert(!BeaconAnalysis.Suspicious("unknown-app",Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*i*65)).ToArray()));
+    Assert(!BeaconAnalysis.Suspicious("unknown-app",Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*10)).ToArray()));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}

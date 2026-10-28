@@ -23,10 +23,34 @@ try
     if(args.Contains("--unprivileged"))
     {
         if(admin)throw new Exception("This probe must use a nonadministrator token");
-        foreach(var command in new[]{"on","off","pause","restore","report","selftest"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        foreach(var command in new[]{"on","off","pause","restore","report","selftest","domains-on","domains-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
         return 0;
     }
     if(!admin)throw new Exception("Administrative integration probe expected");
+    // Real Win32 File.Replace test on an isolated fixture, never on the live Windows hosts file.
+    var testRoot=Path.Combine(Path.GetTempPath(),"OTS-domain-test-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        var hostFile=Path.Combine(testRoot,"hosts");
+        var original="# unrelated admin-managed mapping\n10.0.0.2 internal.corp\n";
+        File.WriteAllText(hostFile,original);
+        var names=Enumerable.Range(0,12).Select(i=>$"malware-{i}.example.net").ToHashSet();
+        var feed=new MaliciousDomainIntelligence.Snapshot(DateTimeOffset.UtcNow,names,0);
+        var blocks=new DomainHostsProtection(null,hostFile);
+        blocks.Enable(feed);
+        if(!blocks.Applied || !File.ReadAllText(hostFile).Contains("0.0.0.0 malware-0.example.net"))
+            throw new Exception("Domain fixture did not install exact hostname blocks");
+        File.AppendAllText(hostFile,"# externally added comment\n");
+        blocks.Restore();
+        if(blocks.Applied || File.ReadAllText(hostFile)!=original+"# externally added comment\n")
+            throw new Exception("Domain rollback failed to preserve external fixture changes");
+        blocks.Restore(); // idempotence
+    }
+    finally { Directory.Delete(testRoot,true); }
+
+
+
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
     var started=DateTimeOffset.UtcNow;
     while(status.Dashboard.Time<started.AddSeconds(-5)||!status.Dashboard.Layers.Any(l=>l.CheckedAt!=null))

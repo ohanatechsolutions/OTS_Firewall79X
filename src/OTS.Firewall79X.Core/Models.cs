@@ -15,7 +15,7 @@ public sealed record Response(bool Ok, string Message, Dashboard? Dashboard = nu
 public static class Wire
 {
     public static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() }, MaxDepth = 32 };
-    public static readonly HashSet<string> Commands = ["status", "on", "off", "pause", "restore", "report", "selftest"];
+    public static readonly HashSet<string> Commands = ["status", "on", "off", "pause", "restore", "report", "selftest", "domains-on", "domains-off"];
     public static bool RequiresAdmin(string command) => command != "status";
     public static bool ValidRequest(Request? request) =>
         request is not null && request.Command is not null &&
