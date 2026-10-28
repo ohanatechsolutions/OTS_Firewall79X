@@ -23,13 +23,22 @@ public sealed class AdditionalHostMonitor : IDisposable
     private DateTimeOffset lastRefresh;
     private int scans, skipped, drops, fileEvents, deviceEvents, watchErrors;
     private bool deviceEventsActive;
+    private bool devicesInitialized;
     private readonly string? defender;
     private string lastScanner = "No scan has completed";
     public AdditionalHostMonitor(EventStore events)
     {
         this.events = events;
-        defender = FindDefender();
-        Refresh();
+        try { defender = FindDefender(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            events.Add(76, "Warning", "Defender discovery unavailable", ex.GetType().Name);
+        }
+        try { Refresh(); }
+        catch (Exception ex)
+        {
+            events.Add(77, "Warning", "Initial device scan unavailable", Wire.Clean(ex.Message, 160));
+        }
         try
         {
             deviceWatcher = new ManagementEventWatcher(@"root\cimv2", "SELECT * FROM Win32_DeviceChangeEvent");
@@ -68,7 +77,6 @@ public sealed class AdditionalHostMonitor : IDisposable
             if (stopped.IsCancellationRequested || DateTimeOffset.UtcNow-lastRefresh < TimeSpan.FromSeconds(15)) return;
             lastRefresh = DateTimeOffset.UtcNow;
             SnapshotDevices();
-            string profiles = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "..");
             // A SYSTEM service sees SYSTEM's profile: use the Windows profile root, not that user's home.
             var windowsUsers = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "Users");
             if (Directory.Exists(windowsUsers))
@@ -90,6 +98,7 @@ public sealed class AdditionalHostMonitor : IDisposable
     }
     private void TryWatch(string path, bool scan)
     {
+        if (watchers.Count >= 128) { skipped++; return; }
         if (watched.Contains(path) || !Directory.Exists(path)) return;
         try
         {
@@ -149,7 +158,7 @@ public sealed class AdditionalHostMonitor : IDisposable
         var next = inventory.Select(d => d.GetValueOrDefault("PNPDeviceID", "")).Where(s => s.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
         lock (devices)
         {
-            if (devices.Count > 0)
+            if (devicesInitialized)
                 foreach (var entry in inventory.Where(d => next.Contains(d.GetValueOrDefault("PNPDeviceID", "")) && !devices.Contains(d.GetValueOrDefault("PNPDeviceID", ""))))
                 {
                     var type = entry.GetValueOrDefault("PNPClass", "") switch
@@ -163,6 +172,7 @@ public sealed class AdditionalHostMonitor : IDisposable
                 }
             devices.Clear();
             foreach (var id in next.Take(4096)) devices.Add(id);
+            devicesInitialized = true;
         }
     }
     private async Task ScanLoop()
