@@ -451,9 +451,9 @@ Test("Section H strict IPC denies secret injection into ordinary commands",()=>{
     Assert(!Wire.ValidRequest(new Request("configure-export",Destination:"X")));
     Assert(Wire.ValidRequest(new Request("configure-export",Destination:"X",Secret:"NeverLogThisPassword")));
     foreach(var json in new[]{
-        "{\\"Command\\":\\"status\\",\\"Secret\\":\\"unauthorized\\"}",
-        "{\\"Command\\":\\"configure-export\\",\\"Destination\\":\\"C:\\\\\\\\tmp\\"}",
-        "{\\"Command\\":\\"configure-export\\",\\"Destination\\":\\"X\\",\\"Secret\\":\\"twelve chars okay\\",\\"secret\\":\\"duplicated\\"}"})
+        """{"Command":"status","Secret":"unauthorized"}""",
+        """{"Command":"configure-export","Destination":"X"}""",
+        """{"Command":"configure-export","Destination":"X","Secret":"twelve chars okay","secret":"duplicated"}"""})
     {
         using var frame=new MemoryStream();
         var bytes=System.Text.Encoding.UTF8.GetBytes(json);
