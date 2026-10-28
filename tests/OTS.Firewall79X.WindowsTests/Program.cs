@@ -28,7 +28,8 @@ try
             if(guard.ActiveRules!=1)throw new Exception("Inbound WFP-source rule was not installed exactly once: "+guard.Health);
             var inbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.InboundPrefix+"8.8.8.8").ToArray();
             if(inbound.Length!=1||inbound[0].Direction!="1"||inbound[0].Action!="0"||inbound[0].RemoteAddresses!="8.8.8.8")
-                throw new Exception("Installed inbound Windows Firewall rule has incorrect direction, action or exact remote address");
+                throw new Exception("Installed inbound Windows Firewall rule unexpected: count="+inbound.Length+
+                    "; name/direction/action/remote="+string.Join(" | ",inbound.Select(x=>x.Name+"/"+x.Direction+"/"+x.Action+"/"+x.RemoteAddresses)));
             if(!guard.BlockObservedIntelligence("1.1.1.1",now)||guard.IntelligenceRules!=1)
                 throw new Exception("Reactive outbound intelligence rule was not installed: "+guard.Health);
             var outbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.OutboundPrefix+"1.1.1.1").ToArray();
@@ -40,6 +41,35 @@ try
         }
         var leftovers=new FirewallAudit().Read().Rules.Where(x=>TemporaryRuleIdentity.UsesReservedName(x.Name)).ToArray();
         if(leftovers.Length>0)throw new Exception("OTS temporary rules remained after disposal");
+        // A third-party rule borrowing the reserved prefix must survive recovery.
+        dynamic firewall=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        string spoofName=OwnedFirewallRule.InboundPrefix+"9.9.9.9";
+        dynamic spoof=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
+        try
+        {
+            spoof.Name=spoofName;spoof.Description="Third-party rule, not OTS-owned";
+            spoof.Direction=1;spoof.Action=0;spoof.Protocol=256;
+            spoof.RemoteAddresses="9.9.9.9";spoof.Profiles=int.MaxValue;spoof.Enabled=true;
+            firewall.Rules.Add(spoof);
+            using(var separateGuard=new TemporaryFirewallGuard(new EventStore(
+                Path.Combine(Path.GetTempPath(),"ots-spoof-ci-"+Guid.NewGuid().ToString("N")))))
+            {
+                separateGuard.Start();
+                if(!separateGuard.Operational)throw new Exception("Guard could not start with spoofed name: "+separateGuard.Health);
+            }
+            dynamic present=firewall.Rules.Item(spoofName);
+            if(present==null)throw new Exception("Spoofed reserved-name rule was incorrectly removed");
+            System.Runtime.InteropServices.Marshal.ReleaseComObject(present);
+        }
+        finally
+        {
+            try{firewall.Rules.Remove(spoofName);}
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(spoof);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(firewall);
+            }
+        }
         return 0;
     }
     if(args.Contains("--impostor"))
