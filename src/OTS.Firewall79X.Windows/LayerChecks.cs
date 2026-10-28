@@ -14,6 +14,9 @@ public sealed class LayerChecks
     public TemporaryFirewallGuard? NetworkGuard {get;set;}
     private HashSet<string>? bluetoothPrevious;
     public FeodoThreatFeed? ThreatFeed {get;set;}
+    public MaliciousDomainFeed? DomainFeed {get;set;}
+    public DomainHostsProtection? DomainBlocks {get;set;}
+    public AdditionalHostMonitor? HostMonitor {get;set;}
     private readonly HashSet<string> intelAlerts=[];
     private SecurityDeviceAudit.Result? deviceSnapshot;
     private SecurityDeviceAudit.Result DeviceStatus()=>deviceSnapshot??=SecurityDeviceAudit.Read();
@@ -33,11 +36,11 @@ public sealed class LayerChecks
         var now=DateTimeOffset.UtcNow;var current=Connections.Where(c=>c.State=="Established").Select(c=>$"{c.Pid}:{c.Remote}").ToHashSet();
         foreach(var c in Connections.Where(c=>c.State=="Established"&&!previousConnections.Contains($"{c.Pid}:{c.Remote}")))
         {
-            string key=$"{c.Process}:{c.Remote}";events.Add(16,"Info","New observed connection",key);
+            string key=$"{c.Pid}:{c.Process}:{c.Remote}";events.Add(16,"Info","New observed connection",key);
             if(connectionsHistory.Count>4096)connectionsHistory.Clear();
             if(!connectionsHistory.TryGetValue(key,out var history))connectionsHistory[key]=history=[];
             history.Add(now);history.RemoveAll(t=>t<now.AddHours(-12));if(history.Count>32)history.RemoveAt(0);
-            if(Detections.IsBeacon(history))events.Add(79,"Warning","Periodic connection indicator",$"{key}; periodicity alone is not proof of malware");
+            if(BeaconAnalysis.Suspicious(c.Process,history))events.Add(79,"Warning","Possible regular outbound beacon",$"{key}; {history.Count} observed reconnections; timing is suggestive, not a malicious verdict");
             if(c.Remote.EndsWith(":25")&&!new[]{"outlook","thunderbird"}.Contains(c.Process.ToLowerInvariant()))events.Add(22,"Warning","Unusual SMTP connection",$"{c.Process} connected to TCP 25");
         }
         previousConnections=current;
@@ -238,12 +241,15 @@ public sealed class LayerChecks
                 var fixes=SystemQueries.Wmi("root\\cimv2","SELECT HotFixID,InstalledOn FROM Win32_QuickFixEngineering","HotFixID","InstalledOn");Changed(id,"Installed Windows hotfixes",fixes);
                 return Good(id,$"{fixes.Count} installed Windows hotfix records",LayerMode.Auditing,"Inventory only. Missing-update search and software CVE matching are incomplete; this does not prove the host is patched.");
             case 73:return firewall!=null?Good(id,FirewallAudit.Analyze(firewall.Value.Rules),LayerMode.Auditing,"Exact-match analysis only; full WFP/IPsec/GPO precedence and range shadowing are not modeled."):Missing(id,"Firewall rule enumeration unavailable");
-            case 75:return Missing(id,"No verified malicious-domain feed or DNS enforcement engine is configured. Legitimate resolution remains unchanged.");
-            case 76:return Channel(id,"Microsoft-Windows-Windows Defender/Operational","Observes Defender detection/remediation events; desktop Downloads scanner requests native Defender scans.");
-            case 77:
-                var devices=SystemQueries.Wmi("root\\cimv2","SELECT Name,PNPDeviceID FROM Win32_PnPEntity WHERE PNPDeviceID LIKE 'USB%'","Name","PNPDeviceID");Changed(id,"USB devices",devices);return Good(id,$"{devices.Count} USB devices observed",LayerMode.Monitoring,"Polling can miss brief connections; no automatic device blocking.");
-            case 78:return Missing(id,"Ransomware canary and file-burst monitoring requires interactive-user collector");
-            case 79:return NetworkError==null?Good(id,$"{connectionsHistory.Count} process/destination histories",LayerMode.Monitoring,"Polling and regularity heuristic only; short connections may be missed and benign polling can appear periodic."):Missing(id,NetworkError);
+            case 75:
+                if(DomainFeed?.Active is not { } domains)return Missing(id,DomainFeed?.Status??"No validated domain intelligence available");
+                return DomainBlocks?.Applied==true
+                    ?Good(id,$"Administrator opt-in managed hosts filtering active; {domains.Domains.Count} fresh feed indicators. {DomainBlocks.Status}",LayerMode.Enforcing,"Exact hostname mapping only, 1,000-entry cap; DNS-over-HTTPS may bypass. Public mirror not cryptographically signed; offline/hardware proof outstanding.")
+                    :Good(id,$"Observation mode: {domains.Domains.Count} URLhaus-format indicators. {DomainFeed.Status}",LayerMode.Monitoring,"Enforcement is OFF until the administrator explicitly opts in. Public mirror is not signed. DNS client events may be disabled.");
+            case 76:return HostMonitor?.Check(76)??Missing(id,"Background Defender file monitor is not started");
+            case 77:return HostMonitor?.Check(77)??Missing(id,"USB device notifications are not started");
+            case 78:return HostMonitor?.Check(78)??Missing(id,"Background file-change monitor is not started");
+            case 79:return NetworkError==null?Good(id,$"{connectionsHistory.Count} process/destination reconnection histories; repeated TCP connection starts analyzed with benign-process suppression",LayerMode.Monitoring,"Bounded 30/90-second TCP sampling misses many short connections and UDP; heuristic requires 9 observations, 8 minutes of timing and <12% variation. A regular interval is not proof of compromise."):Missing(id,NetworkError);
             default:return Missing(id,"Runtime component has not supplied health evidence");
         }
     }
