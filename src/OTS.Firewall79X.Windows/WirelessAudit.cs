@@ -7,7 +7,7 @@ namespace OTS.Firewall79X.Windows;
 public static class WirelessAudit
 {
     public sealed record Network(string Interface,string Ssid,string Bssid,bool SecurityEnabled,uint Authentication,uint Cipher,uint Signal)
-    {public bool Weak=>!SecurityEnabled||Cipher is 0 or 1 or 2 or 5 or 257;}
+    {public bool Weak=>!SecurityEnabled||Cipher is 0 or 1 or 2 or 5 or 257 || Authentication is 2 or 3 or 4 or 5;}
     [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct InterfaceInfo {public Guid Id;[MarshalAs(UnmanagedType.ByValTStr,SizeConst=256)]public string Description;public uint State;}
     [StructLayout(LayoutKind.Sequential)] private struct Ssid {public uint Length;[MarshalAs(UnmanagedType.ByValArray,SizeConst=32)]public byte[] Bytes;}
     [StructLayout(LayoutKind.Sequential)] private struct Association {public Ssid Ssid;public uint BssType;[MarshalAs(UnmanagedType.ByValArray,SizeConst=6)]public byte[] Bssid;public uint PhyType,PhyIndex,Signal,RxRate,TxRate;}
