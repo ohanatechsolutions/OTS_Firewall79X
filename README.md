@@ -51,3 +51,7 @@ Use **Settings & Recovery → Restore previous configuration**, or the separate 
 Build requirements apply to contributors, not installed users: pinned .NET SDK 10.0.403 and Inno Setup 6 on Windows. Run `scripts/build.ps1`; `scripts/windows-smoke.ps1` is restricted to disposable GitHub Actions runners. Dependencies are locked. `dotnet run --project tests/OTS.Firewall79X.Tests -c Release` executes core regressions. CI produces an installer, release ZIP, SBOM, checksums, build manifest, screen previews, and real test result files.
 
 See [architecture](docs/ARCHITECTURE.md), [limitations](KNOWN_LIMITATIONS.md), [dependencies](EXTERNAL_TOOLS.md), and [security reporting](SECURITY.md).
+
+## Section H engineering work (layers 66–74)
+
+See [Section H engineering evidence](docs/SECTION_H_ENGINEERING.md) for new integrity-checked forensic snapshots, persisted quarterly posture history, recovery-kit generation, safe encrypted off-device export primitives, expanded firewall overlap hints, and regression tests. Automatic off-device shipping, unattended encrypted backups, and full physical-Windows acceptance are **not yet certified or enabled**. The application remains a development preview.
