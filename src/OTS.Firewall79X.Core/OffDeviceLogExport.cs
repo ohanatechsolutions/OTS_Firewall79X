@@ -67,7 +67,17 @@ public static class OffDeviceLogExport
             source.Attributes.HasFlag(FileAttributes.ReparsePoint))
             throw new InvalidDataException("Invalid encrypted log queue entry");
         var target = Path.Combine(destinationDirectory, source.Name);
-        if (File.Exists(target)) throw new IOException("Remote archive already exists; refusing overwrite");
+        if (File.Exists(target))
+        {
+            // Delivery may have succeeded before the client crashed prior to deleting its queue
+            // entry. Accept an EXACT byte-identical remote receipt, never overwrite a mismatch.
+            using var existing = File.OpenRead(target);
+            using var original = File.OpenRead(source.FullName);
+            if (existing.Length != original.Length ||
+                !CryptographicOperations.FixedTimeEquals(SHA256.HashData(existing), SHA256.HashData(original)))
+                throw new IOException("Remote filename collision with different content; refusing overwrite");
+            return target;
+        }
         var temp = target + "." + Guid.NewGuid().ToString("N") + ".partial";
         try
         {
