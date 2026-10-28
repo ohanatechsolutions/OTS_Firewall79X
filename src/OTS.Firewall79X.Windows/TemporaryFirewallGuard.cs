@@ -73,12 +73,12 @@ public sealed class TemporaryFirewallGuard : IDisposable
     }
     private static void RemoveOwned(dynamic policy)
     {
-        var state=InspectOwned(policy);
-        foreach(var name in state.Owned)policy.Rules.Remove(name);
+        var state=(ValueTuple<List<string>,bool>)InspectOwned(policy);
+        foreach(var name in state.Item1)policy.Rules.Remove(name);
     }
     private static void RequireNoCollision(dynamic policy,string proposed)
     {
-        if(InspectOwned(policy,proposed).Collision)
+        if(((ValueTuple<List<string>,bool>)InspectOwned(policy,proposed)).Item2)
             throw new InvalidOperationException("An existing firewall rule uses the target OTS name; refusing replacement");
     }
     public void Start()
