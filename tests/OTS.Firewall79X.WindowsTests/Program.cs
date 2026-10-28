@@ -25,7 +25,7 @@ try
     try
     {
         var hostFile=Path.Combine(testRoot,"hosts");
-        var original="# unrelated admin-managed mapping\\n10.0.0.2 internal.corp\\n".Replace("\\\\n","\\n");
+        var original="# unrelated admin-managed mapping\n10.0.0.2 internal.corp\n";
         File.WriteAllText(hostFile,original);
         var names=Enumerable.Range(0,12).Select(i=>$"malware-{i}.example.net").ToHashSet();
         var feed=new MaliciousDomainIntelligence.Snapshot(DateTimeOffset.UtcNow,names,0);
@@ -33,9 +33,9 @@ try
         blocks.Enable(feed);
         if(!blocks.Applied || !File.ReadAllText(hostFile).Contains("0.0.0.0 malware-0.example.net"))
             throw new Exception("Domain fixture did not install exact hostname blocks");
-        File.AppendAllText(hostFile,"# externally added comment\\n");
+        File.AppendAllText(hostFile,"# externally added comment\n");
         blocks.Restore();
-        if(blocks.Applied || File.ReadAllText(hostFile)!=original+"# externally added comment\\n")
+        if(blocks.Applied || File.ReadAllText(hostFile)!=original+"# externally added comment\n")
             throw new Exception("Domain rollback failed to preserve external fixture changes");
         blocks.Restore(); // idempotence
     }
