@@ -65,7 +65,7 @@ public sealed class NeighborChangeTracker
         IReadOnlySet<string> gatewayAddresses)
     {
         List<Change> changes=[];
-        if(!HasBaseline){baseline=new(current,StringComparer.OrdinalIgnoreCase);HasBaseline=true;return changes;}
+        if(!HasBaseline){baseline=current.ToDictionary(x=>x.Key,x=>x.Value,StringComparer.OrdinalIgnoreCase);HasBaseline=true;return changes;}
         foreach(var (key,mac) in current)
         {
             if(!baseline.TryGetValue(key,out var previous)){baseline[key]=mac;continue;}
