@@ -49,6 +49,22 @@ Test("Three-setting journal restores unchanged settings and preserves later edit
     Assert(j.Restore().SequenceEqual(new[]{"autoplay"}));
     Assert(values["autorun"]=="0"&&values["command"]==null&&values["autoplay"]=="third-party");
 });
+Test("Browser manifest flags high impact debugger, wildcard and proxy permissions",()=>{
+    using var debugger=JsonDocument.Parse("{\"permissions\":[\"debugger\"]}");
+    using var proxy=JsonDocument.Parse("{\"optional_permissions\":[\"proxy\"]}");
+    using var hosts=JsonDocument.Parse("{\"host_permissions\":[\"<all_urls>\"]}");
+    Assert(Detections.BrowserManifestHasHighImpactPermissions(debugger.RootElement));
+    Assert(Detections.BrowserManifestHasHighImpactPermissions(proxy.RootElement));
+    Assert(Detections.BrowserManifestHasHighImpactPermissions(hosts.RootElement));
+});
+Test("Browser manifest avoids false malware verdict on ordinary permissions",()=>{
+    using var ordinary=JsonDocument.Parse("{\"permissions\":[\"storage\",\"alarms\"],\"host_permissions\":[\"https://example.com/*\"]}");
+    using var wrongType=JsonDocument.Parse("{\"permissions\":\"debugger\"}");
+    using var array=JsonDocument.Parse("[\"debugger\"]");
+    Assert(!Detections.BrowserManifestHasHighImpactPermissions(ordinary.RootElement));
+    Assert(!Detections.BrowserManifestHasHighImpactPermissions(wrongType.RootElement));
+    Assert(!Detections.BrowserManifestHasHighImpactPermissions(array.RootElement));
+});
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
