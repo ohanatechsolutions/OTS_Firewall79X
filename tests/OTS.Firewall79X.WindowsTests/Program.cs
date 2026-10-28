@@ -71,6 +71,26 @@ try
     Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/windows-observed-status.json",JsonSerializer.Serialize(status.Dashboard,new JsonSerializerOptions(Wire.Json){WriteIndented=true}));
     if(status.Dashboard.Protection!="Partially Protected"||status.Dashboard.BlockedEvents!=0)throw new Exception("Preview overstates protection or blocks");
     var applied=new WindowsSettings().Read(WindowsSettings.AutoRun);if(applied!="255")throw new Exception("Journaled hardening was not applied");
+    var windowsSettings=new WindowsSettings();
+    if(windowsSettings.Read(WindowsSettings.NoAutorun)!="1"||
+       windowsSettings.Read(WindowsSettings.NoAutoplayNonVolume)!="1")
+        throw new Exception("Extended hardening registry policy was not applied");
+    if(WindowsSettings.SafeHardeningKeys.Count!=3)
+        throw new Exception("Unexpected hardening allowlist mutation");
+    if(!SectionFAudits.IsManagementPort("[::]:5985")||
+       SectionFAudits.IsManagementPort("[::1]:443")||
+       SectionFAudits.NonLoopbackListener("[::1]:5985")||
+       !SectionFAudits.NonLoopbackListener("0.0.0.0:5985"))
+        throw new Exception("Management listener classification failed");
+    var hostEvidence=SectionFAudits.HostEvidence();
+    if(!hostEvidence.Contains("ASLR")||!hostEvidence.Contains("password policy",StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Host hardening supplemental evidence missing");
+    var exposure=SectionFAudits.Exposure(new[]{"127.0.0.1:1234","0.0.0.0:5985"});
+    if(!exposure.Contains("1 on common management ports")||!exposure.Contains("NOT prove"))
+        throw new Exception("Local-vs-public exposure disclaimer missing");
+    var update=WindowsMissingUpdateAudit.Latest(out var updateState);
+    if(string.IsNullOrWhiteSpace(updateState))
+        throw new Exception("Missing-update audit does not expose provider status");
     var audit=HostHardeningAudit.Read();
     if(!audit.Summary.Contains("UAC=")||!audit.Summary.Contains("DEP=")||!audit.Summary.Contains("SMBv1"))throw new Exception("Hardening audit evidence missing");
     var integrity=status.Dashboard.Layers.Single(l=>l.Id==61);
