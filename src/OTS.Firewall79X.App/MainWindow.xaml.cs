@@ -126,7 +126,7 @@ public partial class MainWindow : Window
             ExternalExposureResult.Text="External lookup unavailable: "+ex.GetType().Name+
                 ". Local listeners do not demonstrate external reachability. No safety conclusion can be drawn.";
         }
-        finally {if(sender is System.Windows.Controls.Button button)button.IsEnabled=true;}
+        finally {if(sender is System.Windows.Controls.Button restoreButton)restoreButton.IsEnabled=true;}
     }
     private async void SecretsClick(object sender,RoutedEventArgs e)
     {
