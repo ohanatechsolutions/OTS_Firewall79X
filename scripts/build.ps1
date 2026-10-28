@@ -33,6 +33,9 @@ $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
 if ($bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Installer is not a Windows PE executable' }
 $installerHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
 "$installerHash  OTS-Firewall79X-Setup.exe" | Set-Content artifacts/release/OTS-Firewall79X-Setup.exe.sha256 -Encoding ascii
+# Authenticated publisher identity is mandatory for production; preview stays explicitly unsigned.
+& ./scripts/verify-release-provenance.ps1 -RequirePublisherSignature:($env:OTS_RELEASE_CHANNEL -eq 'production')
+if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Release provenance gate failed' }
 Copy-Item RELEASE_NOTES.md,KNOWN_LIMITATIONS.md,artifacts/SBOM.json,artifacts/BUILD_MANIFEST.json artifacts/release/
 Compress-Archive -Path artifacts/release/* -DestinationPath artifacts/OTS-Firewall79X-Windows-x64.zip -Force
 Move-Item artifacts/OTS-Firewall79X-Windows-x64.zip artifacts/release/ -Force

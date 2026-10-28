@@ -71,6 +71,21 @@ public sealed class EventStore
             var verification=EventIntegrity.Verify(lines,key);
             VerifiedRetainedEvents=verification.Verified;LegacyChainGaps=verification.ChainGaps;
             if(verification.LastHmac!=null)chain=verification.LastHmac;
+            // Rebuild durable counters from individually authenticated records; the dashboard
+            // must not reset its historical totals every time the Windows service restarts.
+            foreach(var line in lines.Where(x=>!string.IsNullOrWhiteSpace(x)))
+            {
+                var record=JsonSerializer.Deserialize<EventIntegrity.Record>(line,Wire.Json)
+                    ?? throw new InvalidDataException("Missing verified event record");
+                var evt=JsonSerializer.Deserialize<SecurityEvent>(record.Data,Wire.Json)
+                    ?? throw new InvalidDataException("Missing verified security event");
+                if(evt.Layer is < 0 or > 79 || evt.Time==default ||
+                    evt.Severity is not ("Info" or "Warning" or "High") ||
+                    evt.Kind is null || evt.Detail is null)
+                    throw new InvalidDataException("Invalid retained security event schema");
+                Total++;if(evt.Blocked)Blocked++;
+                recent.Enqueue(evt);while(recent.Count>300)recent.Dequeue();
+            }
         }
         catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
         {
@@ -88,6 +103,9 @@ public sealed class EventStore
             var e=new SecurityEvent(now,layer,severity,kind,detail,blocked);
             if(severity=="High")Interlocked.Exchange(ref snapshotRequested,1);
             Total++;if(blocked)Blocked++;recent.Enqueue(e);while(recent.Count>300)recent.Dequeue();
+            // Never append to a history whose authentication or schema verification failed.
+            // Preserve tampered evidence on disk for investigation; new events remain in RAM.
+            if(LastError!=null)return;
             try
             {
             var data=JsonSerializer.Serialize(e,Wire.Json);

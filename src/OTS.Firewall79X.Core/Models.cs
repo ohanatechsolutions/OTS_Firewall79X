@@ -17,6 +17,28 @@ public static class Wire
     public static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() }, MaxDepth = 32 };
     public static readonly HashSet<string> Commands = ["status", "on", "off", "pause", "restore", "report", "selftest"];
     public static bool RequiresAdmin(string command) => command != "status";
+    public static bool ValidRequest(Request? request) =>
+        request is not null && request.Command is not null &&
+        Commands.Contains(request.Command) && request.Layer is null && request.Enabled is null;
+    private static void ValidateRequestFrame(ReadOnlySpan<byte> bytes)
+    {
+        using var document = JsonDocument.Parse(bytes.ToArray(),
+            new JsonDocumentOptions { MaxDepth = 8, AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow });
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Request must be an object");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!seen.Add(property.Name) || property.Name is not ("Command" or "Layer" or "Enabled") ||
+                (property.Name != "Command" && property.Value.ValueKind != JsonValueKind.Null))
+                throw new InvalidDataException("Unexpected or repeated request property");
+        }
+        if (!root.TryGetProperty("Command", out var command) ||
+            command.ValueKind != JsonValueKind.String || command.GetString() is not string name ||
+            name.Length is < 1 or > 64)
+            throw new InvalidDataException("Unsupported request command");
+    }
     public static string Clean(string? text, int max = 2048) => new((text ?? "").Where(c => !char.IsControl(c) || c is '\t').Take(max).ToArray());
     public static async Task WriteAsync<T>(Stream stream, T data, CancellationToken ct)
     {
@@ -32,6 +54,7 @@ public static class Wire
         int length = BitConverter.ToInt32(prefix);
         if (length < 2 || length > max) throw new InvalidDataException("Invalid message length");
         var bytes = new byte[length]; await stream.ReadExactlyAsync(bytes, ct);
+        if (typeof(T) == typeof(Request)) ValidateRequestFrame(bytes);
         return JsonSerializer.Deserialize<T>(bytes, Json) ?? throw new InvalidDataException("Empty message");
     }
 }
