@@ -141,5 +141,46 @@ Test("TPM and BitLocker unknown-state handling",()=>{
     Assert(SecurityDeviceStates.VolumeProtected("0")==false);
     Assert(SecurityDeviceStates.VolumeProtected("2")==null);
 });
+Test("Layer 41 aggregates only verified public-source remote Windows logons, with cooldown",()=>{
+    var auth=new AuthenticationFailureMonitor();var now=DateTimeOffset.UtcNow;AuthenticationFailureMonitor.Finding finding=new(false,false,0,"","");
+    Assert(!auth.Observe("203.0.113.5","2",now).ValidRemoteSource);
+    Assert(!auth.Observe("127.0.0.1","10",now).ValidRemoteSource);
+    Assert(!auth.Observe("192.168.1.15","3",now).ValidRemoteSource);
+    Assert(!auth.Observe("-","10",now).ValidRemoteSource);
+    for(int i=0;i<8;i++)finding=auth.Observe("8.8.8.8","10",now.AddSeconds(i));
+    Assert(finding.ValidRemoteSource&&finding.Alert&&finding.Count==8);
+    Assert(!auth.Observe("8.8.8.8","10",now.AddSeconds(9)).Alert);
+    Assert(!auth.Observe("8.8.8.8","10",now.AddMinutes(3)).Alert);
+    for(int i=0;i<8;i++)finding=auth.Observe("8.8.8.8","3",now.AddMinutes(6).AddSeconds(i));
+    Assert(finding.Alert);
+});
+Test("Layer 41 handles IPv6 and large source pools within a bounded detector",()=>{
+    var auth=new AuthenticationFailureMonitor();var now=DateTimeOffset.UtcNow;
+    Assert(auth.Observe("2606:4700:4700::1111","3",now).ValidRemoteSource);
+    Assert(!auth.Observe("fe80::1","3",now).ValidRemoteSource);
+    for(int i=0;i<2500;i++)auth.Observe($"8.{i/256}.{i%256}.1","3",now);
+    Assert(auth.Observe("9.9.9.9","10",now).ValidRemoteSource);
+});
+Test("Layer 43 hashes only the requested password and validates padded breach range",()=>{
+    var password=System.Text.Encoding.UTF8.GetBytes("correct horse battery staple");
+    var range=PasswordBreachRange.ComputeRange(password);
+    Assert(range.Prefix.Length==5&&range.Suffix.Length==35);
+    var response=range.Suffix+":42\r\n"+new string('F',35)+":0\r\n";
+    Assert(PasswordBreachRange.ParseCount(range.Suffix,response)==42);
+    Assert(PasswordBreachRange.ParseCount(new string('A',35),response)==0);
+    Throws<InvalidDataException>(()=>PasswordBreachRange.ParseCount(range.Suffix,"not-a-range-response"));
+    Throws<InvalidDataException>(()=>PasswordBreachRange.ParseCount(range.Suffix,response+response));
+    Throws<InvalidDataException>(()=>PasswordBreachRange.ParseCount(range.Suffix,new string('A',1024*1024+1)));
+    Throws<ArgumentException>(()=>PasswordBreachRange.ParseCount("invalid",response));
+    System.Security.Cryptography.CryptographicOperations.ZeroMemory(password);
+});
+Test("Layer 42 parses effective SSH policy without trusting defaults",()=>{
+    var hardened=EffectiveSshPolicy.Parse("passwordauthentication no\npubkeyauthentication yes\npermitemptypasswords no\npermitrootlogin prohibit-password\nstrictmodes yes\nallowtcpforwarding no\nx11forwarding no\n");
+    Assert(hardened.Complete&&hardened.Hardened&&!hardened.Weak);
+    var weak=EffectiveSshPolicy.Parse("passwordauthentication yes\npubkeyauthentication no\npermitemptypasswords yes\npermitrootlogin yes\nstrictmodes no");
+    Assert(weak.Weak&&!weak.Hardened);
+    Assert(!EffectiveSshPolicy.Parse("passwordauthentication no").Hardened);
+    Throws<InvalidDataException>(()=>EffectiveSshPolicy.Parse(new string('x',256*1024+1)));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
