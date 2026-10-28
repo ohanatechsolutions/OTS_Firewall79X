@@ -1,7 +1,7 @@
 name: Windows build and installation verification
 on:
   push:
-    branches: [main, build/windows-security-stack]
+    branches: [main, build/windows-security-stack, feat/section-i-layers-75-79-20261027]
   workflow_dispatch:
 permissions:
   contents: read
