@@ -362,7 +362,8 @@ public sealed class DeceptionMonitor : IDisposable
                 {
                     Interlocked.Increment(ref canaryHits);
                     EmitOnce(12, "High", "Local canary URL contacted",
-                        "A process requested the unique loopback canary path; not externally reachable", 20);
+                        "Exact loopback canary path contacted; " + ClientAttribution(client) +
+                        "; no external reachability claimed", 20);
                 }
                 else
                 {
