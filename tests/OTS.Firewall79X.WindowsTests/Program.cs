@@ -99,7 +99,10 @@ try
     // Use true Security 4663 telemetry for read attribution, not a synthetic
     // event. Conditional because the service never changes machine audit policy.
     var canaryStatus=(await Ipc.SendAsync("status")).Dashboard?.Layers.Single(x=>x.Id==11);
-    bool canaryReadAuditing=AuditPolicy.Coverage(31).Enabled
+    bool systemAuditEnabled=false;
+    try { systemAuditEnabled=AuditPolicy.Coverage(31).Enabled; }
+    catch { /* Unsupported/inaccessible audit-policy query is an unavailable capability. */ }
+    bool canaryReadAuditing=systemAuditEnabled
         && canaryStatus?.Evidence.Contains("read-audit setup: Narrow canary-file SACL installed") == true;
     if(canaryReadAuditing)
     {
