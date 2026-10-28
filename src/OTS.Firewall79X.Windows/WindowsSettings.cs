@@ -32,9 +32,10 @@ public sealed class WindowsSettings : ISettingStore
         var name=RegistryName(key);
         int? number=value==null?null:int.TryParse(value,System.Globalization.NumberStyles.None,
             System.Globalization.CultureInfo.InvariantCulture,out var n)?n:null;
-        var expected=key==AutoRun?255:1;
-        if(value!=null&&number!=expected)
-            throw new ArgumentException("Unsafe hardening value refused",nameof(value));
+        // Restore must accept the exact DWORD that existed before OTS changed it.
+        // Enforcement values are constrained at the only journal.Apply call sites.
+        if(value!=null&&number==null)
+            throw new ArgumentException("Invalid DWORD journal value",nameof(value));
         using var registry=Registry.LocalMachine.CreateSubKey(Explorer,true)
             ??throw new UnauthorizedAccessException("Hardening registry location unavailable");
         if(registry.GetValue(name)!=null&&registry.GetValueKind(name)!=RegistryValueKind.DWord)
