@@ -235,7 +235,7 @@ public sealed class LayerChecks
                 var nonVolume=SystemQueries.Reg(policyPath,"NoAutoplayfornonVolume") is int c&&c==1;
                 var state=$"NoDriveTypeAutoRun={autoRun}; NoAutorun={autoCommand}; NoAutoplayfornonVolume={nonVolume}";
                 return autoRun&&autoCommand&&nonVolume
-                    ?Good(id,state+"; reversible OTS-owned DWORD changes",LayerMode.Enforcing,
+                    ?Good(id,state+"; three allowable DWORD policies configured; only actual OTS changes were journaled for rollback",LayerMode.Enforcing,
                         "Values may be enforced by Group Policy; scope is limited to AutoRun/AutoPlay. No legacy protocol is automatically disabled without a dedicated compatibility/rollback design.")
                     :Bad(id,state+"; one or more journaled hardening settings missing or externally changed",
                         "Every OTS-owned mutation uses durable prepare/apply/compare-before-restore. Other security policies remain untouched.");
