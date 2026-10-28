@@ -8,6 +8,7 @@ public static class MaliciousDomainIntelligence
 {
     public sealed record Snapshot(DateTimeOffset UpdatedUtc, IReadOnlySet<string> Domains, int Rejected);
     private static readonly Regex Timestamp = new(@"^#\s*Last updated:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*\(UTC\)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex OnlineTimestamp = new(@"^#\s*Updated:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     // Explicit exclusions are defense-in-depth, not a substitute for checking feed provenance.
     private static readonly string[] ProtectedSuffixes =
     ["microsoft.com","windows.com","windowsupdate.com","office.com","live.com","github.com","githubusercontent.com",
@@ -23,7 +24,10 @@ public static class MaliciousDomainIntelligence
     }
     public static Snapshot Parse(string body)
     {
-        if (body.Length is < 40 or > 1_000_000 || !body.Contains("abuse.ch URLhaus Host file", StringComparison.OrdinalIgnoreCase))
+        if (body.Length is < 40 or > 1_000_000 ||
+            !(body.Contains("abuse.ch URLhaus Host file", StringComparison.OrdinalIgnoreCase) ||
+              (body.Contains("# Title: Online Malicious Hosts Blocklist", StringComparison.Ordinal) &&
+               body.Contains("# Source: https://urlhaus.abuse.ch/api/", StringComparison.Ordinal))))
             throw new InvalidDataException("Unrecognized or oversized URLhaus format");
         DateTimeOffset? stamp = null;
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -36,17 +40,18 @@ public static class MaliciousDomainIntelligence
             if (line.StartsWith('#'))
             {
                 var match = Timestamp.Match(line);
+                if (!match.Success) match = OnlineTimestamp.Match(line);
                 if (match.Success)
                 {
                     if (stamp != null) throw new InvalidDataException("Duplicate feed timestamp");
-                    if (!DateTime.TryParseExact(match.Groups[1].Value, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                    if (!DateTime.TryParseExact(match.Groups[1].Value, new[] { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-ddTHH:mm:ssZ" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
                         throw new InvalidDataException("Invalid feed timestamp");
                     stamp = new DateTimeOffset(DateTime.SpecifyKind(date, DateTimeKind.Utc));
                 }
                 continue;
             }
             var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length != 2 || fields[0] != "127.0.0.1" || !ValidDomain(fields[1])) { rejected++; continue; }
+            if (fields.Length != 2 || (fields[0] != "127.0.0.1" && fields[0] != "0.0.0.0") || !ValidDomain(fields[1])) { rejected++; continue; }
             names.Add(fields[1].ToLowerInvariant());
         }
         if (stamp is null || names.Count == 0 || rejected > Math.Max(20, names.Count / 10))
