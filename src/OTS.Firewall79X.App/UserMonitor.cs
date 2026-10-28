@@ -13,6 +13,9 @@ internal sealed class UserMonitor : IDisposable
     private readonly List<FileSystemWatcher> watchers=[];private readonly Queue<DateTimeOffset> changes=[];private readonly Queue<SecurityEvent> events=[];private readonly Dictionary<string,string> baseline=[];
     private readonly Channel<string> scans=Channel.CreateBounded<string>(new BoundedChannelOptions(64){FullMode=BoundedChannelFullMode.Wait,SingleReader=true});private readonly CancellationTokenSource stop=new();
     private readonly DispatcherTimer timer;private readonly object gate=new();private string? lastAddressHash;private DateTimeOffset addressAt;private string? defender;private int scansCompleted;private bool scanVerified;private string scanHealth="No scan run yet; scanner capability is unverified";
+    private BrowserSecurityAudit.Result browserAudit=new(0,0,0,0,0,"Browser audit has not completed");
+    private DateTimeOffset nextBrowserAudit=DateTimeOffset.MinValue;
+    private int browserAuditRunning;
     public bool Active {get;private set;}
     public UserMonitor()
     {
@@ -35,7 +38,7 @@ internal sealed class UserMonitor : IDisposable
     public List<LayerResult> Results()
     {
         var now=DateTimeOffset.UtcNow;
-        return [new(28,LayerMode.Monitoring,Active,"Observes current-user camera/microphone ConsentStore timestamps","Privacy registry telemetry is incomplete and can lag; absence of an event is not proof of no device use.",now),new(32,LayerMode.Monitoring,Active,"Detects rapid changes between address-like clipboard strings","Address-format heuristic only; no attribution to a malicious process. Clipboard is never logged.",now),new(48,LayerMode.Auditing,Active,"Observes Chromium-family extension directories","Change inventory only; does not determine extension trust or all browser security settings.",now),new(76,defender!=null?LayerMode.Monitoring:LayerMode.Unavailable,defender!=null&&scanVerified,$"Downloads scan requests completed: {scansCompleted}; {scanHealth}","Microsoft Defender must be installed and usable. Scan completion does not independently establish a detection verdict; see Protection History.",now),new(78,LayerMode.Monitoring,Active,"Documents/Downloads mass-change heuristic and named canary modification alerts","May miss read access, rapid events on buffer overflow, and changes outside watched folders. No automatic process termination.",now)];
+        return [new(28,LayerMode.Monitoring,Active,"Observes current-user camera/microphone ConsentStore timestamps","Privacy registry telemetry is incomplete and can lag; absence of an event is not proof of no device use.",now),new(32,LayerMode.Monitoring,Active,"Detects rapid changes between address-like clipboard strings","Address-format heuristic only; no attribution to a malicious process. Clipboard is never logged.",now),new(48,browserAudit.Profiles>0?LayerMode.Auditing:LayerMode.Unavailable,Active&&browserAudit.Profiles>0&&browserAudit.RiskyExtensions==0&&browserAudit.SafeBrowsingDisabled==0&&browserAudit.Unreadable==0,browserAudit.Evidence,"Read-only manifest/registry/profile heuristic; high-impact permissions are not proof of malware. User browser policy, Firefox signed-extension state and externally installed browser packages require further verification.",now),new(76,defender!=null?LayerMode.Monitoring:LayerMode.Unavailable,defender!=null&&scanVerified,$"Downloads scan requests completed: {scansCompleted}; {scanHealth}","Microsoft Defender must be installed and usable. Scan completion does not independently establish a detection verdict; see Protection History.",now),new(78,LayerMode.Monitoring,Active,"Documents/Downloads mass-change heuristic and named canary modification alerts","May miss read access, rapid events on buffer overflow, and changes outside watched folders. No automatic process termination.",now)];
     }
     private void Watch(string dir,bool download)
     {
@@ -77,6 +80,18 @@ internal sealed class UserMonitor : IDisposable
     private void Tick(object? sender,EventArgs e)
     {
         try
+        {
+            if(DateTimeOffset.UtcNow>=nextBrowserAudit&&Interlocked.CompareExchange(ref browserAuditRunning,1,0)==0)
+            {
+                nextBrowserAudit=DateTimeOffset.UtcNow.AddMinutes(5);
+                _=Task.Run(()=>
+                {
+                    try {browserAudit=BrowserSecurityAudit.Read();}
+                    catch(Exception ex) {Add(48,"Warning","Browser security audit unavailable",ex.GetType().Name);}
+                    finally {Interlocked.Exchange(ref browserAuditRunning,0);}
+                });
+            }
+            Track(48,"Browser security inventory",browserAudit.Evidence);
         {
             var text=BoundedClipboard.ReadAddressCandidate();
             if(text!=null)
