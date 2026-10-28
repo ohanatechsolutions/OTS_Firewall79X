@@ -58,7 +58,7 @@ public sealed class Engine : IDisposable
         AtomicFile.Write(Paths.At("pre-activation.json"),JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,AutoRun=settings.Read(WindowsSettings.AutoRun),NoAutorun=settings.Read(WindowsSettings.NoAutorun),NonVolumeAutoPlay=settings.Read(WindowsSettings.NoAutoplayNonVolume)},Wire.Json));
         try
         {
-            journal.Apply(WindowsSettings.AutoRun,"255");journal.Apply(WindowsSettings.NoAutorun,"1");journal.Apply(WindowsSettings.NoAutoplayNonVolume,"1");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;sensors=new(events,networkGuard);sensors.Start();checks.Sensors=sensors;deception=new(events);
+            journal.Apply(WindowsSettings.AutoRun,"255");journal.Apply(WindowsSettings.NoAutorun,"1");journal.Apply(WindowsSettings.NoAutoplayNonVolume,"1");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;deception=new(events);sensors=new(events,networkGuard){Deception=deception};sensors.Start();checks.Sensors=sensors;
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
             events.Add(47,"Info","Protection activated","Three allowlisted AutoRun/AutoPlay settings journaled with rollback; existing firewall policy preserved");
@@ -144,8 +144,30 @@ public sealed class Engine : IDisposable
         LayerResult Good(string text,LayerMode mode=LayerMode.Monitoring,string limit="")=>new(id,mode,true,text,limit);
         switch(id)
         {
-            case 11:return deception?.Healthy==true?Good("Protected decoy-file modification watcher is active",limit:"Modification, rename, and deletion detection only; reads are not observed."):new(id,LayerMode.Unavailable,false,"Canary monitor unavailable");
-            case 12:case 13:return deception?.Healthy==true?Good($"Loopback-only HTTP decoy listening on 127.0.0.1:{deception.Port}",limit:"Local connections only; no external DNS/URL canary service or off-machine detection."):new(id,LayerMode.Unavailable,false,"Decoy listener unavailable");
+            case 11:
+                if(deception?.FileMonitorHealthy != true)
+                    return new(id,LayerMode.Unavailable,false,"Canary filesystem watcher or independent hash verifier unavailable");
+                bool fileAudit = deception.AuditReady
+                    && sensors?.Has("Security")==true;
+                return Good($"Three isolated decoy files monitored with SHA-256 checks; audited 4663 reads={deception.AuditedReads}; read-audit setup: {deception.AuditStatus}",
+                    LayerMode.Monitoring,
+                    fileAudit
+                        ? "Windows Security 4663 access attribution is conditional on real events, audit policy and effective SACLs. Silent file reads cannot be proven absent."
+                        : "File tamper monitoring is active, but file-read attribution is unavailable: " + deception.AuditStatus);
+            case 12:
+                if(deception?.ListenerHealthy != true)
+                    return new(id,LayerMode.Unavailable,false,"Local canary URL listener unavailable");
+                return Good($"Unique local URL canary active on loopback port {deception.Port}; URL hits={deception.CanaryHits}; observed canary DNS events={deception.DnsHits}",
+                    LayerMode.Monitoring,
+                    sensors?.Has("Microsoft-Windows-DNS-Client/Operational")==true
+                        ? "Local DNS queries are monitored when Windows emits relevant DNS Client events. No off-machine endpoint exists, and no remote detection is claimed."
+                        : "Windows DNS Client event channel is unavailable: only the loopback canary URL is monitored. No external canary endpoint is configured.");
+            case 13:
+                return deception?.ListenerHealthy == true
+                    ? Good($"Loopback-only decoy HTTP listener on 127.0.0.1:{deception.Port}; observed service probes={deception.DecoyHits}; concurrency limit=6, request cap=2 KiB, timeout=2 seconds",
+                        LayerMode.Monitoring,
+                        "No public interface, vulnerable backend, remote-source enforcement or source bans. Local probes are evidence, not proof of compromise.")
+                    : new(id,LayerMode.Unavailable,false,"Decoy service unavailable or listener stopped");
             case 53:
                 return WatchdogRunning()
                     ?Good("Independent watchdog Windows service is running; primary SCM recovery policy configured",limit:"Crash-loop throttling is SCM-controlled; physical failure injection and recovery evidence are still required.")

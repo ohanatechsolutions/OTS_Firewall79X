@@ -414,6 +414,34 @@ Test("Section D execution indicators require suspicious command or parent lineag
     Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
     Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
 });
+Test("Canary DNS comparison requires exact generated name and ignores DNS case/trailing dot",()=>{
+    const string expected="ots-0123456789abcdef0123456789abcdef.invalid";
+    Assert(DeceptionRules.IsGeneratedCanaryDnsName(expected));
+    Assert(DeceptionRules.IsCanaryDnsQuery(expected.ToUpperInvariant()+".",expected));
+    Assert(!DeceptionRules.IsCanaryDnsQuery("other."+expected,expected));
+    Assert(!DeceptionRules.IsCanaryDnsQuery("not-a-canary.invalid",expected));
+    Assert(!DeceptionRules.IsGeneratedCanaryDnsName("ots-not-random.invalid"));
+});
+Test("HTTP canary requires exact GET or HEAD path with bounded single-line syntax",()=>{
+    var path="/canary/0123456789abcdef0123456789abcdef";
+    Assert(DeceptionRules.IsCanaryHttpRequest("GET "+path+" HTTP/1.1",path));
+    Assert(DeceptionRules.IsCanaryHttpRequest("HEAD "+path+" HTTP/1.0",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest("POST "+path+" HTTP/1.1",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest("GET "+path+"/extra HTTP/1.1",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest("GET http://remote.test"+path+" HTTP/1.1",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest(new string('X',1000),path));
+});
+Test("Audited canary file access requires exact 4663 object identity and rights",()=>{
+    const string file=@"C:\ProgramData\OTS\canaries\decoy.txt";
+    var read=DeceptionRules.ClassifyFileAudit("File",file,file,"0x1");
+    Assert(read.Read&&!read.Changed);
+    Assert(DeceptionRules.ClassifyFileAudit("File",file,file,"0x2").Changed);
+    Assert(DeceptionRules.ClassifyFileAudit("File",file,file,"0x10000").Changed);
+    Assert(!DeceptionRules.ClassifyFileAudit("File",file+"-other",file,"0x1").Read);
+    Assert(!DeceptionRules.ClassifyFileAudit("Key",file,file,"0x1").Read);
+    Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"bad").Read);
+    Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"0x80").Read);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 
