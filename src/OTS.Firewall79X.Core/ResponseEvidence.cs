@@ -155,6 +155,23 @@ public static class SecurityDossier
         b.AppendLine($"Confirmed OTS blocks: {d.BlockedEvents}; observed events: {d.TotalEvents}. Source: active service status.");
         b.AppendLine("\n## Priority review items");
         foreach (var recommendation in PostureAdvice.Recommend(d.Layers)) b.AppendLine("- " + recommendation);
+        b.AppendLine("\n## Transparent scoring breakdown");
+        b.AppendLine("Weight 3: layers 1, 6, 46, 53, 55, 57, 59, 65 and 76. All other layers: weight 1.");
+        b.AppendLine("Unavailable and idle layers receive no points; Not Applicable excludes a verified non-applicable capability; monitoring is not blocking.");
+        b.AppendLine("The per-category figures are capability-health summaries, NOT independent exposure ratings.");
+        b.AppendLine("| Category | Score | Applicable weight | Healthy weight | Unavailable or idle |");
+        b.AppendLine("|---|---:|---:|---:|---:|");
+        foreach (var category in Catalog.All.GroupBy(x => x.Category))
+        {
+            var list = category.Select(def => d.Layers.FirstOrDefault(x => x.Id == def.Id)
+                ?? new LayerResult(def.Id,LayerMode.Unavailable,false,"No observation")).ToArray();
+            var included = list.Where(x => x.Mode != LayerMode.NotApplicable).ToArray();
+            int possible = included.Sum(x => Posture.Weight(x.Id));
+            int good = included.Where(x => x.Healthy && x.Mode is LayerMode.Enforcing or LayerMode.Monitoring or LayerMode.Auditing)
+                               .Sum(x => Posture.Weight(x.Id));
+            int misses = included.Count(x => x.Mode is LayerMode.Idle or LayerMode.Unavailable);
+            b.AppendLine($"| {category.Key.Replace("|","/")} | {(possible == 0 ? "Not Applicable" : Math.Round(100.0*good/possible).ToString("F0")+"%")} | {possible} | {good} | {misses} |");
+        }
         b.AppendLine("\n## Catalog and live capability evidence");
         b.AppendLine("| ID | Layer | Category | Mode | Healthy within declared limits | Last checked (UTC) | Evidence | Limits |");
         b.AppendLine("|---|---|---|---|---|---|---|---|");
