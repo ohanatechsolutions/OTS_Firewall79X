@@ -127,9 +127,14 @@ public static class SectionFAudits
         }
         catch(Exception ex)when(ex is System.Management.ManagementException or UnauthorizedAccessException)
         {report.Add("Wake provider unavailable: "+ex.GetType().Name);}
-        var lms=SystemQueries.Wmi(@"root\cimv2",
-            "SELECT Name,State FROM Win32_Service WHERE Name='LMS' OR Name='jhi_service'","Name","State");
-        report.Add("Intel local management service records="+lms.Count+" (absence does not rule out firmware AMT)");
+        try
+        {
+            var lms=SystemQueries.Wmi(@"root\cimv2",
+                "SELECT Name,State FROM Win32_Service WHERE Name='LMS' OR Name='jhi_service'","Name","State");
+            report.Add("Intel local management service records="+lms.Count+" (absence does not rule out firmware AMT)");
+        }
+        catch(Exception ex)when(ex is System.Management.ManagementException or UnauthorizedAccessException or COMException)
+        {report.Add("Intel management service provider unavailable: "+ex.GetType().Name);}
         var management=listeners.Where(x=>NonLoopbackListener(x)&&IsManagementPort(x)).Take(20).ToArray();
         report.Add("Non-loopback potential management listeners="+management.Length+
             (management.Length==0?"":": "+string.Join(", ",management)));
@@ -161,7 +166,8 @@ public static class WindowsMissingUpdateAudit
             searcher=ses.CreateUpdateSearcher();dynamic worker=searcher;
             found=worker.Search("IsInstalled=0 and IsHidden=0 and Type='Software'");
             dynamic result=found;updates=result.Updates;dynamic list=updates;
-            int count=Math.Min((int)list.Count,4096),security=0;
+            int count=(int)list.Count,security=0;
+            if(count is <0 or >4096)throw new InvalidDataException("Windows Update Agent result exceeds safe inventory limit");
             for(var i=0;i<count;i++)
             {
                 object item=list.Item(i);
@@ -199,12 +205,18 @@ public static class WindowsMissingUpdateAudit
                 catch(Exception ex){last=new(DateTimeOffset.UtcNow,0,0,"Audit failed: "+ex.GetType().Name,false);}
                 pending=null;
             }
-            if(last!=null&&DateTimeOffset.UtcNow-last.Time<TimeSpan.FromHours(6))
+            if(last!=null&&DateTimeOffset.UtcNow-last.Time<(last.Verified?TimeSpan.FromHours(6):TimeSpan.FromMinutes(15)))
             {state=last.Evidence;return last;}
             if(pending==null)
             {
                 started=DateTimeOffset.UtcNow;
                 pending=Task.Run(Search);
+            }
+            if(DateTimeOffset.UtcNow-started>TimeSpan.FromMinutes(5))
+            {
+                state="Windows Update Agent search has exceeded five minutes; missing-update state is unverified. "+
+                    "The single COM task is still pending and no duplicate search will be started.";
+                return null;
             }
             state="Read-only Windows Update Agent scan in progress since "+started.ToString("u")+
                 "; no result yet (COM search can take several minutes). No third-party CVE match data is configured.";
