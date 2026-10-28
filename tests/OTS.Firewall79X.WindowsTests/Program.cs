@@ -19,6 +19,27 @@ try
         try{await client;throw new Exception("Client accepted an endpoint not owned by the registered service");}
         catch(UnauthorizedAccessException){return 0;}
     }
+    // Real Win32 File.Replace test on an isolated fixture, never on the live Windows hosts file.
+    var testRoot=Path.Combine(Path.GetTempPath(),"OTS-domain-test-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        var hostFile=Path.Combine(testRoot,"hosts");
+        var original="# unrelated admin-managed mapping\\n10.0.0.2 internal.corp\\n".Replace("\\\\n","\\n");
+        File.WriteAllText(hostFile,original);
+        var names=Enumerable.Range(0,12).Select(i=>$"malware-{i}.example.net").ToHashSet();
+        var feed=new MaliciousDomainIntelligence.Snapshot(DateTimeOffset.UtcNow,names,0);
+        var blocks=new DomainHostsProtection(null,hostFile);
+        blocks.Enable(feed);
+        if(!blocks.Applied || !File.ReadAllText(hostFile).Contains("0.0.0.0 malware-0.example.net"))
+            throw new Exception("Domain fixture did not install exact hostname blocks");
+        File.AppendAllText(hostFile,"# externally added comment\\n");
+        blocks.Restore();
+        if(blocks.Applied || File.ReadAllText(hostFile)!=original+"# externally added comment\\n")
+            throw new Exception("Domain rollback failed to preserve external fixture changes");
+        blocks.Restore(); // idempotence
+    }
+    finally { Directory.Delete(testRoot,true); }
     var status=await Ipc.SendAsync("status");if(!status.Ok||status.Dashboard?.Layers.Count!=79)throw new Exception("Status/catalog unavailable");
     if(args.Contains("--unprivileged"))
     {
