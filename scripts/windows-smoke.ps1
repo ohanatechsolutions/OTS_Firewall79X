@@ -21,11 +21,18 @@ function FirewallSnapshot([string]$Stage) {
   return $current
 }
 function AssertFirewallUnchanged([string]$Stage) {
-  $current=FirewallSnapshot $Stage
-  if($current -ne $before) {
-    $diff=Compare-Object ($before -split "`n") ($current -split "`n") | Out-String -Width 1000
+  $current = FirewallSnapshot $Stage
+  # Windows creates transient packaged-app resource rules when a new user profile
+  # is initialized. Keep them in the full forensic snapshots, but exclude only
+  # Microsoft's ms-resource packaged-app rules from the equality assertion.
+  # All other rules, including OTS-owned rules, must remain identical.
+  $ignoreWindowsPackageRule = '^@\\{Microsoft\\.[^|]*\\?ms-resource://'
+  $baselineStable = @($before -split "`n" | Where-Object { $_ -notmatch $ignoreWindowsPackageRule })
+  $currentStable = @($current -split "`n" | Where-Object { $_ -notmatch $ignoreWindowsPackageRule })
+  $diff = Compare-Object -ReferenceObject $baselineStable -DifferenceObject $currentStable | Out-String -Width 1000
+  if ($diff.Trim().Length -gt 0) {
     $diff | Set-Content "artifacts/firewall-difference-$Stage.log"
-    throw "Firewall rules changed during $Stage. Difference: $diff"
+    throw "Stable firewall rules changed during $Stage. Difference: $diff"
   }
 }
 $policyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
