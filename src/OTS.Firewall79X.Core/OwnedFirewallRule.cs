@@ -24,6 +24,19 @@ public static class OwnedFirewallRule
                           name.StartsWith(IntelligencePrefix, StringComparison.Ordinal) ||
                           name.StartsWith(AuthenticationPrefix, StringComparison.Ordinal));
 
+    /// <summary>Only exact hosts: Windows Firewall COM serializes a single IPv4
+    /// address as address/255.255.255.255 (or address/32), and IPv6 as /128.
+    /// A network, address list, wildcard, or different host is not ours.</summary>
+    public static bool ExactHostAddress(string? observed,string? expected)
+    {
+        if(observed is null||expected is null||!IPAddress.TryParse(expected,out var ip)||
+           !string.Equals(expected,ip.ToString(),StringComparison.OrdinalIgnoreCase))return false;
+        if(string.Equals(observed,expected,StringComparison.OrdinalIgnoreCase))return true;
+        var masks=ip.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork
+            ? new[]{"/32","/255.255.255.255"} : new[]{"/128"};
+        return masks.Any(mask=>string.Equals(observed,expected+mask,StringComparison.OrdinalIgnoreCase));
+    }
+
     public static bool Matches(
         string? name, string? description, string? remoteAddresses,
         int direction, int action, int protocol, int profiles, bool enabled,
@@ -45,7 +58,7 @@ public static class OwnedFirewallRule
             return false;
         // Match EXACT canonical address, never a broad CIDR, range or address list.
         if (!string.Equals(address, ip.ToString(), StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(remoteAddresses, address, StringComparison.OrdinalIgnoreCase))
+            !ExactHostAddress(remoteAddresses,address))
             return false;
         return authentication
             ? direction == 1 && description == AuthenticationDescription
