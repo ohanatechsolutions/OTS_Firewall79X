@@ -79,3 +79,7 @@ Earlier Section A builds mistakenly treated the LOCAL `SourceAddress` as the rem
 ## Firewall-rule ownership and test isolation
 
 Rule cleanup now requires an exact registered rule prefix, exact public remote IP, direction, action, any-protocol selector, and either an exact current ownership group/marker or the precisely recognized legacy description. A prefix collision with any unrecognized rule causes fail-closed refusal instead of deleting or replacing it. Administrative users remain trusted; these tags are not cryptographic authorization. The Windows integration test no longer starts a second guard, which previously could remove real service-owned temporary rules during testing.
+
+## Bluetooth Classic paired and connection-state observation
+
+Added a passive Windows Bluetooth Classic cached-device enumeration using `BluetoothFindFirstDevice`/`BluetoothFindNextDevice`. It compares authenticated (paired/bonded) and connected flags to the previous observation and raises warnings for newly seen paired or connected devices. Device hardware addresses are never placed directly in alerts: only fingerprints are emitted. It does **not** issue Bluetooth inquiry, pairing, or radio changes. Bluetooth LE and alternative stacks may be unobservable, and Windows cached state does not independently prove user authorization. Real Bluetooth hardware validation remains required.
