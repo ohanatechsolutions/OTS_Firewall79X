@@ -26,6 +26,7 @@ public sealed class DeceptionMonitor : IDisposable
     private readonly string ownershipFile;
     private readonly Dictionary<string, string> expected = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> lastAlert = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Queue<DateTimeOffset> recentConnections = new();
     private readonly object sync = new();
     private readonly CancellationTokenSource stop = new();
     private readonly SemaphoreSlim slots = new(MaxConcurrentClients);
@@ -287,6 +288,23 @@ public sealed class DeceptionMonitor : IDisposable
             while (!ct.IsCancellationRequested)
             {
                 var client = await listener.AcceptTcpClientAsync(ct);
+                bool permitted;
+                lock (sync)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    while (recentConnections.Count > 0
+                        && recentConnections.Peek() < now.AddMinutes(-1))
+                        recentConnections.Dequeue();
+                    permitted = recentConnections.Count < 120;
+                    if (permitted) recentConnections.Enqueue(now);
+                }
+                if (!permitted)
+                {
+                    client.Dispose();
+                    EmitOnce(13, "Warning", "Honeypot connection-rate limit",
+                        "Loopback decoy rejected traffic beyond 120 requests per minute", 60);
+                    continue;
+                }
                 if (!slots.Wait(0))
                 {
                     client.Dispose();
@@ -337,8 +355,9 @@ public sealed class DeceptionMonitor : IDisposable
                 {
                     Interlocked.Increment(ref decoyHits);
                     string remote = client.Client.RemoteEndPoint?.ToString() ?? "unavailable";
+                    string attribution = ClientAttribution(client);
                     EmitOnce(13, "Warning", "Decoy service connection",
-                        $"Loopback-only listener {Port}; peer {Wire.Clean(remote, 64)}; no remote intrusion claimed", 20);
+                        $"Loopback-only listener {Port}; peer {Wire.Clean(remote, 64)}; {attribution}; no remote intrusion claimed", 20);
                 }
                 // Static, nonfunctional response; never execute client input or reflect it.
                 var response = canary
@@ -356,7 +375,26 @@ public sealed class DeceptionMonitor : IDisposable
         catch (IOException) { /* Peer closed the connection; the accept loop stays alive. */ }
         catch (SocketException) { /* Peer closed the connection. */ }
         catch (Exception ex) { EmitOnce(13, "Warning", "Decoy request failure", Wire.Clean(ex.Message, 120)); }
-        finally { slots.Release(); }
+        finally { try { slots.Release(); } catch (ObjectDisposedException) { } }
+    }
+
+    private string ClientAttribution(TcpClient client)
+    {
+        try
+        {
+            if (client.Client.RemoteEndPoint is not IPEndPoint peer)
+                return "owning process unavailable";
+            // Best-effort native IP Helper snapshot. Never infer an owner when
+            // the exact client-local and decoy-remote TCP ports do not match.
+            var owner = NetworkTables.Connections().FirstOrDefault(c =>
+                c.State == "Established"
+                && c.Local.EndsWith("]:" + peer.Port, StringComparison.Ordinal)
+                && c.Remote.EndsWith("]:" + Port, StringComparison.Ordinal));
+            return owner == null
+                ? "owning process unavailable (connection may be short-lived)"
+                : $"observed PID {owner.Pid}; process={Wire.Clean(owner.Process, 64)}";
+        }
+        catch { return "owning process unavailable (IP Helper query failed)"; }
     }
 
     public void Dispose()
