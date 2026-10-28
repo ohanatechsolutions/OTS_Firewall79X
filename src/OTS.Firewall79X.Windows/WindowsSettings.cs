@@ -4,17 +4,43 @@ namespace OTS.Firewall79X.Windows;
 
 public sealed class WindowsSettings : ISettingStore
 {
+    // Explicit allowlist. Journal keys must never become arbitrary registry writes.
     public const string AutoRun="machine.autorun.disabled";
+    public const string NoAutorun="machine.autorun.command.disabled";
+    public const string NoAutoplayNonVolume="machine.autoplay.nonvolume.disabled";
+    public static readonly IReadOnlySet<string> SafeHardeningKeys =
+        new HashSet<string>(StringComparer.Ordinal){AutoRun,NoAutorun,NoAutoplayNonVolume};
+    private const string Explorer=@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+    private static string RegistryName(string key)=>key switch
+    {
+        AutoRun=>"NoDriveTypeAutoRun",
+        NoAutorun=>"NoAutorun",
+        NoAutoplayNonVolume=>"NoAutoplayfornonVolume",
+        _=>throw new ArgumentException("Setting is not in the allowlist",nameof(key))
+    };
     public string? Read(string key)
     {
-        if(key==AutoRun){using var r=Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer");return r?.GetValue("NoDriveTypeAutoRun")?.ToString();}
-        throw new ArgumentException("Setting is not in the allowlist");
+        var name=RegistryName(key);
+        using var registry=Registry.LocalMachine.OpenSubKey(Explorer);
+        if(registry?.GetValue(name)==null)return null;
+        if(registry.GetValueKind(name)!=RegistryValueKind.DWord)
+            throw new InvalidDataException("Unexpected registry value kind for "+name);
+        return ((int)registry.GetValue(name)!).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
     public void Write(string key,string? value)
     {
-        if(key!=AutoRun)throw new ArgumentException("Setting is not in the allowlist");
-        using var r=Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer");
-        if(value==null)r.DeleteValue("NoDriveTypeAutoRun",false);else r.SetValue("NoDriveTypeAutoRun",int.Parse(value),RegistryValueKind.DWord);
+        var name=RegistryName(key);
+        int? number=value==null?null:int.TryParse(value,System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,out var n)?n:null;
+        var expected=key==AutoRun?255:1;
+        if(value!=null&&number!=expected)
+            throw new ArgumentException("Unsafe hardening value refused",nameof(value));
+        using var registry=Registry.LocalMachine.CreateSubKey(Explorer,true)
+            ??throw new UnauthorizedAccessException("Hardening registry location unavailable");
+        if(registry.GetValue(name)!=null&&registry.GetValueKind(name)!=RegistryValueKind.DWord)
+            throw new InvalidDataException("Refusing to overwrite a non-DWORD policy");
+        if(number==null)registry.DeleteValue(name,false);
+        else registry.SetValue(name,number.Value,RegistryValueKind.DWord);
     }
 }
 public sealed class FirewallAudit
