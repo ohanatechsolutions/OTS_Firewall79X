@@ -35,7 +35,8 @@ public static class Wire
                 throw new InvalidDataException("Unexpected or repeated request property");
         }
         if (!root.TryGetProperty("Command", out var command) ||
-            command.ValueKind != JsonValueKind.String || !Commands.Contains(command.GetString()!))
+            command.ValueKind != JsonValueKind.String || command.GetString() is not string name ||
+            name.Length is < 1 or > 64)
             throw new InvalidDataException("Unsupported request command");
     }
     public static string Clean(string? text, int max = 2048) => new((text ?? "").Where(c => !char.IsControl(c) || c is '\t').Take(max).ToArray());
