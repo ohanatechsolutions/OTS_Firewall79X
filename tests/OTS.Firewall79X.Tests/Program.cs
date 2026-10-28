@@ -298,5 +298,105 @@ Test("Layer 42 parses effective SSH policy without trusting defaults",()=>{
     Assert(!EffectiveSshPolicy.Parse("passwordauthentication no").Hardened);
     Throws<InvalidDataException>(()=>EffectiveSshPolicy.Parse(new string('x',256*1024+1)));
 });
+Test("Section H forensic snapshot roundtrip, corruption rejection and unique versions",()=>{
+    var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
+    var dashboard=new Dashboard(true,"Partially Protected",12,30,DateTimeOffset.UtcNow,null,
+        Catalog.All.Select(c=>new LayerResult(c.Id,LayerMode.Unavailable,false,"Not assessed")).ToList(),[],[],2,0,0,null,"unavailable");
+    var first=ForensicSnapshots.Capture(root,dashboard,2);
+    var second=ForensicSnapshots.Capture(root,dashboard,2);
+    Assert(first!=second&&ForensicSnapshots.Verify(first).Data.Layers.Count==79);
+    var json=File.ReadAllText(first).Replace("Partially Protected","Fully Protected");
+    File.WriteAllText(first,json);
+    Throws<InvalidDataException>(()=>ForensicSnapshots.Verify(first));
+    var third=ForensicSnapshots.Capture(root,dashboard,2);
+    Assert(File.Exists(first),"Damaged evidence must be preserved");
+    Assert(File.Exists(third)&&File.Exists(second));
+});
+Test("Section H dossier contains 79 operational states and missing-data guidance",()=>{
+    var rows=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"No evidence","Test limitation")).ToList();
+    var d=new Dashboard(true,"Partially Protected",0,0,DateTimeOffset.UtcNow,null,rows,[],[],0,0,0,null,"");
+    var doc=SecurityDossier.Generate(d);
+    Assert(doc.Contains("| 79 |")&&doc.Contains("Layer 57")&&doc.Contains("unavailable",StringComparison.OrdinalIgnoreCase));
+    Assert(PostureAdvice.Recommend(rows).Count>0);
+});
+Test("Section H quarter history survives restart and catches up without fabricated days",()=>{
+    var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
+    var history=Path.Combine(root,"history.json");var reports=Path.Combine(root,"reports");
+    var t=new DateTimeOffset(2025,12,31,12,0,0,TimeSpan.Zero);
+    var d=new Dashboard(true,"Partially Protected",38,52,t,null,[],[],[],12,0,0,null,"");
+    QuarterlyHistory.Observe(history,d);QuarterlyHistory.Observe(history,d with{Score=45});
+    Assert(QuarterlyHistory.Load(history).Count==1,"Only one daily sample should survive");
+    Assert(QuarterlyHistory.CreateDue(history,reports,t).Count==0);
+    var created=QuarterlyHistory.CreateDue(history,reports,t.AddDays(1));
+    Assert(created.Count==1&&File.ReadAllText(created[0]).Contains("45"));
+    Assert(QuarterlyHistory.CreateDue(history,reports,t.AddDays(2)).Count==0,"Report must be idempotent");
+    File.WriteAllText(history,"{bad json");
+    Throws<System.Text.Json.JsonException>(()=>QuarterlyHistory.Load(history));
+});
+Test("Section H range audit recognizes IPv4, IPv6 and port overlaps but not unknown keywords",()=>{
+    Assert(FirewallOverlap.PortsOverlap("80-100","90,443"));
+    Assert(!FirewallOverlap.PortsOverlap("80-90","443"));
+    Assert(!FirewallOverlap.PortsOverlap("RPC Dynamic Ports","443"));
+    Assert(FirewallOverlap.AddressesOverlap("192.168.1.0/24","192.168.1.2"));
+    Assert(!FirewallOverlap.AddressesOverlap("192.168.1.0/24","10.0.0.1/32"));
+    Assert(FirewallOverlap.AddressesOverlap("2001:db8::/32","2001:db8::2"));
+    Assert(!FirewallOverlap.AddressesOverlap("LocalSubnet","192.168.1.2"));
+    var baseRule=new FirewallRuleView("allow","1","1","6","80-90","192.168.1.0/24","7","",true);
+    var match=baseRule with{Name="block",Action="0",LocalPorts="85",RemoteAddresses="192.168.1.11"};
+    var report=FirewallOverlap.Analyze(new[]{baseRule,match});
+    Assert(report.PotentialOverlaps>0&&report.Examined==2);
+    Assert(FirewallOverlap.Analyze(new[]{baseRule,match with{Profiles="0"}}).PotentialOverlaps==0);
+});
+Test("Section H encrypted export queue verifies data and preserves retry on failures",()=>{
+    var root=Path.GetDirectoryName(Temp())!;var queue=Path.Combine(root,"queue");var receiver=Path.Combine(root,"receiver");
+    Directory.CreateDirectory(root);Directory.CreateDirectory(receiver);
+    var source=Path.Combine(root,"source.jsonl");File.WriteAllText(source,"security log data");
+    var archive=OffDeviceLogExport.Enqueue(queue,source,"twelve-chars-or-more");
+    Assert(!OffDeviceLogExport.IsOffDeviceDestination(receiver),"Local hard disk must not count as off-device");
+    Throws<IOException>(()=>OffDeviceLogExport.Ship(archive,receiver));
+    var copy=OffDeviceLogExport.CopyAndVerify(archive,receiver);
+    Assert(File.Exists(archive)&&File.Exists(copy),"Do not delete queued evidence before successful remote receipt");
+    Assert(SecureArchive.Decrypt(copy,"twelve-chars-or-more").AsSpan().SequenceEqual(System.Text.Encoding.UTF8.GetBytes("security log data")));
+    Assert(OffDeviceLogExport.CopyAndVerify(archive,receiver)==copy,
+        "Byte-identical delivery receipt should be safe to retry after interrupted queue deletion");
+    var data=File.ReadAllBytes(copy);data[^1]^=1;File.WriteAllBytes(copy,data);
+    Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(archive,receiver));
+    Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(copy,"twelve-chars-or-more"));
+});
+Test("Section H restored encrypted backup retains last-modified timestamp",()=>{
+    var root=Path.GetDirectoryName(Temp())!;var source=Path.Combine(root,"src");Directory.CreateDirectory(source);
+    var file=Path.Combine(source,"time.txt");File.WriteAllText(file,"important");
+    var timestamp=new DateTime(2022,2,3,4,5,6,DateTimeKind.Utc);File.SetLastWriteTimeUtc(file,timestamp);
+    var encrypted=Path.Combine(root,"time.otsfolder");
+    FolderBackup.Create(source,encrypted,"twelve-chars-or-more");
+    var restored=Path.Combine(root,"restored");FolderBackup.Restore(encrypted,restored,"twelve-chars-or-more");
+    Assert(Math.Abs((File.GetLastWriteTimeUtc(Path.Combine(restored,"time.txt"))-timestamp).TotalSeconds)<2);
+});
+
+Test("Section H generated offline kit preserves verified owned configuration exports",()=>{
+    var baseDir=Path.GetDirectoryName(Temp())!;var install=Path.Combine(baseDir,"install");var data=Path.Combine(baseDir,"data");var kit=Path.Combine(baseDir,"kit");
+    Directory.CreateDirectory(install);Directory.CreateDirectory(data);
+    File.WriteAllText(Path.Combine(data,"changes.json"),"[]");
+    File.WriteAllText(Path.Combine(install,"OTS.Firewall79X.Recovery.exe"),"fixture");
+    var result=RecoveryKit.Create(kit,install,data);
+    Assert(result.IncludesRecoveryExecutable && result.ConfigurationFiles==1);
+    Assert(File.ReadAllText(result.ManifestPath).Contains(Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("[]")))));
+    Assert(File.ReadAllText(Path.Combine(kit,"RECOVERY_INSTRUCTIONS.md")).Contains("NOT a bootable"));
+    Assert(File.ReadAllText(Path.Combine(kit,"RESTORE_OWNED_SETTINGS.ps1")).Contains("--restore"));
+});
+Test("Section H configured-only resilience actions remain administrator-only",()=>{
+    foreach(var command in new[]{"configure-backup","configure-export","disable-backup","disable-export"})
+    {
+        Assert(Wire.Commands.Contains(command));
+        Assert(Wire.RequiresAdmin(command));
+    }
+    var request=new Request("configure-export",Destination=@"Z:\\OTS-logs",Secret="NeverLogThisPassword");
+    using var stream=new MemoryStream();
+    Wire.WriteAsync(stream,request,default).GetAwaiter().GetResult();
+    stream.Position=0;
+    var parsed=Wire.ReadAsync<Request>(stream,1024,default).GetAwaiter().GetResult();
+    Assert(parsed.Command==request.Command&&parsed.Secret==request.Secret&&parsed.Destination==request.Destination);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
