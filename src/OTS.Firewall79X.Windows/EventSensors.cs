@@ -24,7 +24,7 @@ public sealed class EventSensors : IDisposable
     public EventSensors(EventStore events,TemporaryFirewallGuard? networkGuard=null){this.events=events;this.networkGuard=networkGuard;}
     public void Start()
     {
-        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4648 or EventID=4672 or EventID=4720 or EventID=4722 or EventID=4723 or EventID=4724 or EventID=4725 or EventID=4726 or EventID=4728 or EventID=4729 or EventID=4732 or EventID=4733 or EventID=4738 or EventID=4740 or EventID=4756 or EventID=4767 or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
+        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4648 or EventID=4672 or (EventID>=4720 and EventID<=4767) or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
         Watch("System","*[System[(EventID=7045 or EventID=7040)]]");
         Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
