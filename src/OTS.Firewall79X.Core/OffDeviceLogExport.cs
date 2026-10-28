@@ -74,12 +74,12 @@ public static class OffDeviceLogExport
             using (var input = File.OpenRead(source.FullName))
             using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             { input.CopyTo(output); output.Flush(true); }
-            using var original = File.OpenRead(source.FullName);
-            using var copied = File.OpenRead(temp);
-            var h1 = SHA256.HashData(original);
-            var h2 = SHA256.HashData(copied);
+            byte[] h1, h2;
+            using (var original = File.OpenRead(source.FullName)) h1 = SHA256.HashData(original);
+            using (var copied = File.OpenRead(temp)) h2 = SHA256.HashData(copied);
             if (!CryptographicOperations.FixedTimeEquals(h1, h2))
                 throw new InvalidDataException("Off-device copy checksum mismatch");
+            // Release read handles before an atomic rename on Windows.
             File.Move(temp, target, false);
             return target;
         }
