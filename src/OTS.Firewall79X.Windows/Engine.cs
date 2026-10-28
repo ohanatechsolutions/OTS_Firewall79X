@@ -128,7 +128,7 @@ public sealed class Engine : IDisposable
             var score=Posture.Calculate(results,true);
             lock(gate){if(!enabled||epoch!=version)return;
             cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary);
-            if(events.ConsumeSnapshotRequest()&&!governor.DeferNonessentialDiskWork)
+            if(!governor.DeferNonessentialDiskWork&&events.ConsumeSnapshotRequest())
             {
                 var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
                 AtomicFile.Write(Path.Combine(folder,$"snapshot-{now:yyyyMMdd-HHmmss}.json"),JsonSerializer.Serialize(cached,Wire.Json));
