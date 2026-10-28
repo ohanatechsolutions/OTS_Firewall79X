@@ -37,6 +37,8 @@ function AssertFirewallUnchanged([string]$Stage) {
 }
 $policyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
 $oldAutorun = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
+$oldNoAutorun = (Get-ItemProperty $policyPath -Name NoAutorun -ErrorAction SilentlyContinue).NoAutorun
+$oldNonVolume = (Get-ItemProperty $policyPath -Name NoAutoplayfornonVolume -ErrorAction SilentlyContinue).NoAutoplayfornonVolume
 $before = FirewallSnapshot baseline
 $setup = (Resolve-Path artifacts/release/OTS-Firewall79X-Setup.exe).Path
 $root = "$env:ProgramFiles\OTS Firewall79X"
@@ -65,7 +67,12 @@ $null=FirewallSnapshot after-user-profile
 Check 'Catalog and transaction self-check' { RunExe $helper '--selftest --quiet' }
 Check 'Pause and resume commands' { RunExe $helper '--pause --quiet';RunExe $helper '--on --quiet' }
 Check 'Off and recovery' { RunExe $helper '--off --quiet';RunExe $helper '--restore --quiet' }
-Check 'Restoration preserves original AutoRun policy' { $current = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun;if($current -ne $oldAutorun){throw 'Original AutoRun policy not restored'} }
+Check 'Restoration preserves all original AutoRun and AutoPlay policies' {
+  foreach ($pair in @(@('NoDriveTypeAutoRun',$oldAutorun),@('NoAutorun',$oldNoAutorun),@('NoAutoplayfornonVolume',$oldNonVolume))) {
+    $current=(Get-ItemProperty $policyPath -Name $pair[0] -ErrorAction SilentlyContinue).$($pair[0])
+    if($current -ne $pair[1]){throw "Original $($pair[0]) policy was not restored"}
+  }
+}
 Check 'Later independent changes are preserved on OFF' {
   RunExe $helper '--on --quiet'
   Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value 128 -Type DWord
