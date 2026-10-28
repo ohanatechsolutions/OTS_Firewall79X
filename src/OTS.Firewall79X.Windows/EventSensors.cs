@@ -8,10 +8,13 @@ public sealed class EventSensors : IDisposable
 {
     private readonly List<EventLogWatcher> watchers=[];private readonly EventStore events;
     private readonly object sync=new();private readonly Dictionary<string,Queue<(DateTimeOffset Time,int Port)>> attempts=[];
-    private readonly Dictionary<string,Queue<DateTimeOffset>> failures=[];
+    private readonly AuthenticationFailureMonitor authenticationFailures=new();
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
     private readonly TemporaryFirewallGuard? networkGuard;
+    private int remoteFailedLoginEvents,loginSecurityEvents;
+    public int ObservedRemoteLogonFailures=>Volatile.Read(ref remoteFailedLoginEvents);
+    public int ObservedLoginSecurityEvents=>Volatile.Read(ref loginSecurityEvents);
     private int parsedDnsResponses;
     private int networkProtectionDetections;
     public int NetworkProtectionDetections=>Volatile.Read(ref networkProtectionDetections);
@@ -23,7 +26,7 @@ public sealed class EventSensors : IDisposable
     public EventSensors(EventStore events,TemporaryFirewallGuard? networkGuard=null){this.events=events;this.networkGuard=networkGuard;}
     public void Start()
     {
-        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4672 or EventID=4720 or EventID=4728 or EventID=4732 or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
+        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4648 or EventID=4672 or (EventID>=4720 and EventID<=4767) or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
         Watch("System","*[System[(EventID=7045 or EventID=7040)]]");
         Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007 or EventID=1125 or EventID=1126)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
@@ -60,21 +63,66 @@ public sealed class EventSensors : IDisposable
             switch(record.Id)
             {
                 case 4624:
-                    events.Add(45,"Info","Login",$"Type {Get("LogonType")}; source {Get("IpAddress")}");
-                    if(Get("LogonType")=="10")
-                        events.Add(15,"Info","Remote RDP session indicator",
-                            "Windows logged a remote-interactive session; "+TrafficRules.MitreTechnique("remote-rdp-logon")+
-                            ". Session origin and authorization require review.");
-                    break;
-                case 4625:
-                    events.Add(45,"Warning","Failed login",$"Source {Get("IpAddress")}; status {Get("Status")}");
-                    lock(sync){var ip=Get("IpAddress");if(failures.Count>4096)failures.Clear();if(!failures.TryGetValue(ip,out var q))failures[ip]=q=new();q.Enqueue(now);while(q.Count>0&&q.Peek()<now.AddMinutes(-2))q.Dequeue();if(q.Count>=8)
+                {
+                    var type=Get("LogonType");
+                    if(type is "2" or "3" or "7" or "10" or "11")
                     {
-                        events.Add(41,"High","Repeated failed authentication",$"{q.Count} failures from {ip} within 2 minutes; no automatic ban");
-                        events.Add(15,"Warning","Authentication attack-pattern indicator",
-                            $"{q.Count} failures observed; {TrafficRules.MitreTechnique("repeated-logon-failures")}. No source restriction applied.");
-                    }}break;
-                case 4672:case 4720:case 4728:case 4732:case 4719:events.Add(27,"Warning","Account or privilege event",$"Security event {record.Id}; review Windows Security log for account details");break;
+                        var kind=type switch {"2"=>"Interactive","3"=>"Network","7"=>"Unlock","10"=>"Remote interactive (RDP)","11"=>"Cached interactive",_=>"Unknown"};
+                        var account=Wire.Clean(Get("TargetUserName"),64);
+                        events.Add(45,type=="10"?"Warning":"Info",kind+" logon",
+                            $"Account={account}; remote={Wire.Clean(Get("IpAddress"),64)}; Windows Security event 4624.");
+                        Interlocked.Increment(ref loginSecurityEvents);
+                        if(type=="10")events.Add(15,"Info","Remote-interactive access technique hypothesis",
+                            TrafficRules.MitreTechnique("remote-rdp-logon")!+"; classify only a verified Windows 4624 logon type 10.");
+                    }
+                    break;
+                }
+                case 4625:
+                {
+                    var type=Get("LogonType");
+                    events.Add(45,"Warning","Failed authentication",
+                        $"Type={Wire.Clean(type,8)}; source={Wire.Clean(Get("IpAddress"),64)}; status={Wire.Clean(Get("Status"),20)}; Windows event 4625.");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    lock(sync)
+                    {
+                        var failure=authenticationFailures.Observe(Get("IpAddress"),type,now);
+                        if(failure.ValidRemoteSource)
+                        {
+                            Interlocked.Increment(ref remoteFailedLoginEvents);
+                            if(failure.Alert)
+                            {
+                                events.Add(41,"High","Repeated remote authentication failures",
+                                    $"{failure.Count} observed network/remote-interactive failures from {failure.Source} within two minutes; suspicious but no IP ban or account lockout was applied.");
+                                events.Add(15,"Warning","Authentication attack-pattern hypothesis",
+                                    $"{failure.Count} verified remote failures; {TrafficRules.MitreTechnique("repeated-logon-failures")}. Authentication attempts are not proof of compromise.");
+                            }
+                        }
+                    }
+                    break;
+                }
+                case 4648:
+                    events.Add(45,"Warning","Explicit credentials used",
+                        $"Windows event 4648; calling account {Wire.Clean(Get("SubjectUserName"),64)}. No credentials collected.");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
+                case 4672:
+                    events.Add(45,"Warning","Special privileges assigned to logon",
+                        $"Windows event 4672; account {Wire.Clean(Get("SubjectUserName"),64)}. Assignment does not necessarily mean an administrator elevated an app.");
+                    events.Add(27,"Warning","Special privilege logon","Windows event 4672");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
+                case 4720:case 4722:case 4723:case 4724:case 4725:case 4726:
+                case 4728:case 4729:case 4732:case 4733:case 4738:case 4740:
+                case 4756:case 4767:
+                    events.Add(44,"Warning","Account or privileged group changed",
+                        $"Windows event {record.Id}; target {Wire.Clean(Get("TargetUserName"),64)}. Review the Security event for the actor and effective permissions.");
+                    events.Add(27,"Warning","Account security event",$"Windows event {record.Id}");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
+                case 4719:
+                    events.Add(27,"High","Security audit policy modified","Windows event 4719; audit reliability may have changed");
+                    events.Add(45,"Warning","Authentication audit policy modified","Recheck logon and account change event coverage");
+                    break;
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
                 case 4663:
                     AuditedFileAccess.Finding found;
@@ -89,16 +137,25 @@ public sealed class EventSensors : IDisposable
                             $"{found.DistinctFiles} distinct files accessed by one process within one minute; backups and indexing can be legitimate. Copy/exfiltration has not been proven.");
                     break;
                 case 4688:
+                {
                     var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"));
                     if(indicator!=null)
                     {
                         events.Add(36,"Warning","Suspicious execution indicator",indicator);
-                        if(Path.GetFileName(Get("NewProcessName")).Equals("powershell.exe",StringComparison.OrdinalIgnoreCase)||
-                            Path.GetFileName(Get("NewProcessName")).Equals("pwsh.exe",StringComparison.OrdinalIgnoreCase))
+                        var commandProcess=Path.GetFileName(Get("NewProcessName"));
+                        if(commandProcess.Equals("powershell.exe",StringComparison.OrdinalIgnoreCase)||
+                            commandProcess.Equals("pwsh.exe",StringComparison.OrdinalIgnoreCase))
                             events.Add(15,"Warning","Script-execution technique hypothesis",
                                 TrafficRules.MitreTechnique("script-powershell")!+"; evidence is a Windows process-creation audit.");
                     }
+                    if(Get("TokenElevationType")=="%%1937")
+                    {
+                        events.Add(45,"Info","Elevated process token observed",
+                            $"Windows event 4688; executable {Wire.Clean(Path.GetFileName(Get("NewProcessName")),80)}; full token reported. This alone is not proof of abuse.");
+                        Interlocked.Increment(ref loginSecurityEvents);
+                    }
                     break;
+                }
                 case 5157:
                     var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);
                     networkGuard?.ObserveBlocked(address,Get("Direction"),port,now);

@@ -5,8 +5,9 @@ using OTS.Firewall79X.Core;
 
 namespace OTS.Firewall79X.Windows;
 
-/// <summary>Optional network intelligence observation. Does not install firewall rules,
-/// disable system DNS, or treat HTTPS transport as feed code signing.</summary>
+/// <summary>Optional, time-validated intelligence observation. The Windows monitor
+/// may react with an exact-destination, short-lived Windows Firewall rule; this
+/// fetcher never installs rules or treats HTTPS transport as feed code signing.</summary>
 public sealed class FeodoThreatFeed : IDisposable
 {
     private const string Source = "https://feodotracker.abuse.ch/downloads/ipblocklist_recommended.txt";
@@ -29,8 +30,8 @@ public sealed class FeodoThreatFeed : IDisposable
         {
             var snapshot=Active;
             return snapshot!=null
-                ? $"Feodo Tracker HTTPS observation feed: {snapshot.Addresses.Count} IPv4 C2 indicators; source updated {snapshot.UpdatedUtc:O}. No OTS firewall blocks installed."
-                : "Feodo Tracker feed unavailable or stale: " + health + ". No OTS firewall blocks installed.";
+                ? $"Feodo Tracker HTTPS observation feed: {snapshot.Addresses.Count} IPv4 C2 indicators; source updated {snapshot.UpdatedUtc:O}. Only individually observed matching destinations may receive temporary rules; no full-feed blocking."
+                : "Feodo Tracker feed unavailable or stale: " + health + ". Freshness-dependent intelligence restrictions are removed during normal service maintenance.";
         }
     }
     public async Task RefreshIfDueAsync(CancellationToken ct)

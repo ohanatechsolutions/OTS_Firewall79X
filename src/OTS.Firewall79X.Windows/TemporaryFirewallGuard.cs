@@ -14,14 +14,17 @@ namespace OTS.Firewall79X.Windows;
 public sealed class TemporaryFirewallGuard : IDisposable
 {
     private const string Prefix="OTS Firewall79X temporary inbound source ";
+    private const string IntelPrefix="OTS Firewall79X temporary outbound intelligence ";
     private readonly object gate=new();
     private readonly Dictionary<string,DateTimeOffset> active=new(StringComparer.Ordinal);
+    private readonly Dictionary<string,DateTimeOffset> intelligence=new(StringComparer.Ordinal);
     private readonly NetworkAbuseWindow detector=new();
     private readonly EventStore events;
     private bool started;
     public bool Operational {get;private set;}
     public string Health {get;private set;}="Not initialized";
     public int ActiveRules {get { lock(gate)return active.Count; } }
+    public int IntelligenceRules {get { lock(gate)return intelligence.Count; } }
     public TemporaryFirewallGuard(EventStore events) => this.events=events;
 
     private static dynamic Policy()
@@ -52,7 +55,7 @@ public sealed class TemporaryFirewallGuard : IDisposable
             try
             {
                 string name=(string)rule.Name;
-                if(name.StartsWith(Prefix,StringComparison.Ordinal))names.Add(name);
+                if(name.StartsWith(Prefix,StringComparison.Ordinal)||name.StartsWith(IntelPrefix,StringComparison.Ordinal))names.Add(name);
             }
             finally { Marshal.ReleaseComObject(rule); }
             if(names.Count>128)throw new InvalidDataException("Unexpected number of owned rules; refusing bulk deletion");
@@ -122,11 +125,54 @@ public sealed class TemporaryFirewallGuard : IDisposable
             }
         }
     }
-    public void Sweep(DateTimeOffset now)
+    /// <summary>Reactive exact-destination rule for an observed, freshly listed Feodo IPv4 C2 endpoint.
+    /// Current HTTPS source material is not independently signed; does not imply a malware verdict.</summary>
+    public bool BlockObservedIntelligence(string address,DateTimeOffset now)
+    {
+        if(!Operational || !NetworkAbuseWindow.EligiblePublicSource(address))return false;
+        lock(gate)
+        {
+            if(!Operational || intelligence.Count>=16 || intelligence.ContainsKey(address))return false;
+            if(!NetworkAbuseWindow.EligiblePublicSource(address,TrustedAddresses()))return false;
+            dynamic? policy=null;dynamic? rule=null;
+            try
+            {
+                policy=Policy();
+                var type=Type.GetTypeFromProgID("HNetCfg.FWRule")??
+                    throw new PlatformNotSupportedException("Windows Firewall rule API unavailable");
+                rule=Activator.CreateInstance(type)!;
+                rule.Name=IntelPrefix+address;
+                rule.Description="OTS temporary rule for observed, fresh Feodo intelligence; removed at expiry/feed failure/OFF";
+                rule.Direction=2;  // NET_FW_RULE_DIR_OUT
+                rule.Action=0;     // NET_FW_ACTION_BLOCK
+                rule.Protocol=256; // Any protocol
+                rule.RemoteAddresses=address;
+                rule.Profiles=int.MaxValue;
+                rule.Enabled=true;
+                policy.Rules.Add(rule);
+                intelligence[address]=now.AddMinutes(5);
+                events.Add(5,"High","Temporary intelligence restriction installed",
+                    $"Exact outbound destination {address}; five-minute rule installed. Actual packet drops are not measured.");
+                return true;
+            }
+            catch(Exception ex)
+            {
+                Health="Intelligence restriction failed: "+Wire.Clean(ex.Message,160);
+                events.Add(5,"Warning","Intelligence rule failed",Health);
+                return false;
+            }
+            finally
+            {
+                if(rule!=null)Marshal.ReleaseComObject(rule);
+                if(policy!=null)Marshal.ReleaseComObject(policy);
+            }
+        }
+    }
+    public void Sweep(DateTimeOffset now,bool intelligenceFresh=true)
     {
         lock(gate)
         {
-            if(!Operational || !active.Values.Any(t=>t<=now))return;
+            if(!Operational || (!active.Values.Any(t=>t<=now)&&!intelligence.Any(p=>p.Value<=now||!intelligenceFresh)))return;
             dynamic? policy=null;
             try
             {
@@ -135,6 +181,11 @@ public sealed class TemporaryFirewallGuard : IDisposable
                 {
                     policy.Rules.Remove(RuleName(pair.Key));
                     active.Remove(pair.Key);
+                }
+                foreach(var pair in intelligence.Where(p=>p.Value<=now||!intelligenceFresh).ToArray())
+                {
+                    policy.Rules.Remove(IntelPrefix+pair.Key);
+                    intelligence.Remove(pair.Key);
                 }
             }
             catch(Exception ex)
@@ -154,7 +205,7 @@ public sealed class TemporaryFirewallGuard : IDisposable
             try
             {
                 policy=Policy();RemoveOwned(policy);
-                active.Clear();Health="All OTS temporary source restrictions restored";
+                active.Clear();intelligence.Clear();Health="All OTS temporary restrictions restored";
             }
             catch(Exception ex)
             {
