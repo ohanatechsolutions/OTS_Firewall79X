@@ -9,10 +9,8 @@ namespace OTS.Firewall79X.App;
 internal static class BrowserSecurityAudit
 {
     internal sealed record Result(int Profiles,int Extensions,int RiskyExtensions,int SafeBrowsingDisabled,
-        int Unreadable,string Evidence);
+        int Unreadable,int UnknownPolicies,string Evidence);
     private sealed record Browser(string Name,string Root,string PolicyPath,bool Firefox=false);
-    private static readonly string[] DangerousPermissions=
-        ["debugger","management","nativeMessaging","proxy","webRequestBlocking"];
     private static string? Policy(string path,string name)
     {
         try
@@ -128,7 +126,7 @@ internal static class BrowserSecurityAudit
                 {errors++;}
             }
         }
-        return new(profiles,extensions,risky,disabled,errors,
+        return new(profiles,extensions,risky,disabled,errors,unknownPolicies,
             $"{profiles} supported profiles (Chrome/Edge/Brave/Firefox); {extensions} extensions inventoried; "+
             $"{risky} manifest(s) request high-impact permissions; {disabled} profile(s) explicitly disable Safe Browsing; "+
             $"{unknownPolicies} profile(s) have unknown/effective security policy; {errors} inaccessible/invalid entries. "+
