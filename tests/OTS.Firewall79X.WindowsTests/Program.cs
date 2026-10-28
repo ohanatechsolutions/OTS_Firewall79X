@@ -32,6 +32,17 @@ try
     }
     if(!admin)throw new Exception("Administrative integration probe expected");
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
+    if(status.Dashboard.AuthenticationProtectionEnabled)
+        throw new Exception("Optional authentication blocking must always default off on service restart");
+    var enabledRdp=await Ipc.SendAsync("authguard-on");
+    if(!enabledRdp.Ok)throw new Exception("Privileged opt-in RDP guard failed: "+enabledRdp.Message);
+    var armed=await Ipc.SendAsync("status");
+    if(armed.Dashboard?.AuthenticationProtectionEnabled!=true)
+        throw new Exception("Authentication protection state not exposed by the service");
+    var disabledRdp=await Ipc.SendAsync("authguard-off");
+    if(!disabledRdp.Ok)throw new Exception("Optional RDP guard disable/cleanup failed: "+disabledRdp.Message);
+    if((await Ipc.SendAsync("status")).Dashboard?.AuthenticationProtectionEnabled==true)
+        throw new Exception("Authentication protection stayed armed after explicit OFF");
     var started=DateTimeOffset.UtcNow;
     while(status.Dashboard.Time<started.AddSeconds(-5)||!status.Dashboard.Layers.Any(l=>l.CheckedAt!=null))
     {
