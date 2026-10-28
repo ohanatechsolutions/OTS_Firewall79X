@@ -19,6 +19,14 @@ try
         try{await client;throw new Exception("Client accepted an endpoint not owned by the registered service");}
         catch(UnauthorizedAccessException){return 0;}
     }
+    var status=await Ipc.SendAsync("status");if(!status.Ok||status.Dashboard?.Layers.Count!=79)throw new Exception("Status/catalog unavailable");
+    if(args.Contains("--unprivileged"))
+    {
+        if(admin)throw new Exception("This probe must use a nonadministrator token");
+        foreach(var command in new[]{"on","off","pause","restore","report","selftest","domains-on","domains-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        return 0;
+    }
+    if(!admin)throw new Exception("Administrative integration probe expected");
     // Real Win32 File.Replace test on an isolated fixture, never on the live Windows hosts file.
     var testRoot=Path.Combine(Path.GetTempPath(),"OTS-domain-test-"+Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(testRoot);
@@ -40,14 +48,7 @@ try
         blocks.Restore(); // idempotence
     }
     finally { Directory.Delete(testRoot,true); }
-    var status=await Ipc.SendAsync("status");if(!status.Ok||status.Dashboard?.Layers.Count!=79)throw new Exception("Status/catalog unavailable");
-    if(args.Contains("--unprivileged"))
-    {
-        if(admin)throw new Exception("This probe must use a nonadministrator token");
-        foreach(var command in new[]{"on","off","pause","restore","report","selftest"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
-        return 0;
-    }
-    if(!admin)throw new Exception("Administrative integration probe expected");
+
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
     var started=DateTimeOffset.UtcNow;
     while(status.Dashboard.Time<started.AddSeconds(-5)||!status.Dashboard.Layers.Any(l=>l.CheckedAt!=null))
