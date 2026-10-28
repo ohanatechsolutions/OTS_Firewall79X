@@ -19,6 +19,10 @@ try
         try{await client;throw new Exception("Client accepted an endpoint not owned by the registered service");}
         catch(UnauthorizedAccessException){return 0;}
     }
+    if(!EventSensors.SecurityEventQuery.Contains("EventID=4648",StringComparison.Ordinal) ||
+       !EventSensors.SecurityEventQuery.Contains("EventID=4778",StringComparison.Ordinal) ||
+       !EventSensors.SecurityEventQuery.Contains("EventID=4801",StringComparison.Ordinal))
+        throw new Exception("Section E Security event subscription omits required event classes");
     var status=await Ipc.SendAsync("status");if(!status.Ok||status.Dashboard?.Layers.Count!=79)throw new Exception("Status/catalog unavailable");
     if(args.Contains("--unprivileged"))
     {

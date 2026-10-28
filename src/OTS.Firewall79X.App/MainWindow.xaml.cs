@@ -16,7 +16,8 @@ public partial class MainWindow : Window
     private sealed record Row(int Id,string Name,string Category,string Mode,string Health,string Evidence,double? Duration);
     private DesktopNotifications? notifications;private DateTimeOffset lastAlert=DateTimeOffset.UtcNow,lastNotification=DateTimeOffset.MinValue;
     private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private readonly DispatcherTimer timer;private bool ready;
-    private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
+    private static readonly HttpClient http=new(new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false})
+    {Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=1024*1024};
     public MainWindow()
     {
         InitializeComponent();SourceInitialized+=(_,_)=>NativeChrome.Apply(this);ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{FitWindowToDisplay();notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};

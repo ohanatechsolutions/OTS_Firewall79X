@@ -309,8 +309,9 @@ public sealed class LayerChecks
                 if(Sensors?.Has("Security")!=true)return Missing(id,"Security event subscription unavailable: no verified remote login protection");
                 var audit41=AuditPolicy.Coverage(41);
                 if(!audit41.Enabled)return Missing(id,audit41.Evidence);
-                return Good(id,$"Observed {Sensors.ObservedRemoteLogonFailures} verified public-source remote failed logins; bounded per-source correlation, threshold=8 failures in 2 minutes, alerts deduplicated for 5 minutes",
-                    LayerMode.Monitoring,"Windows Security Event 4625 types 3/10 only; unsupported services and nonpublic sources are not attributed. No automatic IP restriction: unverified bans can lock out legitimate remote administrators.");
+                return Good(id,$"Observed {Sensors.ObservedRemoteLogonFailures} verified public-source remote failed logins; threshold=8/2min; opt-in RDP restrictions={(NetworkGuard?.AuthenticationProtectionEnabled==true?"armed":"off")}; active RDP rules={NetworkGuard?.AuthenticationRules??0}",
+                    NetworkGuard?.AuthenticationProtectionEnabled==true?LayerMode.Enforcing:LayerMode.Monitoring,
+                     "Windows Security 4625 types 3/10 only. Optional administrator-enabled restrictions apply only to TCP 3389 after 32 invalid-account RDP failures targeting five distinct nonexistent users, for two minutes. A false positive can interrupt remote management; default is alerts only.");
             case 42:
                 var sshAudit=SshEffectiveAudit.Read(Connections);
                 return new(id,sshAudit.Mode,sshAudit.Healthy,sshAudit.Evidence,sshAudit.Limitations);
@@ -325,7 +326,7 @@ public sealed class LayerChecks
                 if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security log collector unavailable");
                 var audit45=AuditPolicy.Coverage(45);
                 if(!audit45.Enabled)return Missing(id,audit45.Evidence);
-                return Good(id,$"Verified logon/failed-logon audit policy and Security event subscription; {Sensors.ObservedLoginSecurityEvents} account access/privilege events observed",
+                return Good(id,$"Verified logon/failed-logon audit policy and Security event subscription; {Sensors.ObservedLoginSecurityEvents} account/session events and {Sensors.ObservedPrivilegeSecurityEvents} privilege events observed",
                     LayerMode.Monitoring,"Classifies interactive, network, unlock, remote interactive and cached logons; watches explicit credentials, privileged logons, account changes, and token elevation when process creation is audited. Security event logging and provider configuration determine coverage.");
             case 46:
                 var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();

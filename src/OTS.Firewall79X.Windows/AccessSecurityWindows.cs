@@ -31,16 +31,12 @@ public static class SshEffectiveAudit
             return new(LayerMode.Unavailable,false,"OpenSSH service found; system sshd.exe unavailable",
                 "Custom binary or service executable cannot be attested; no file was executed.");
         var serviceCommand=Environment.ExpandEnvironmentVariables(path).Trim();
-        var trustedBinary=serviceCommand.StartsWith("\""+executable+"\"",StringComparison.OrdinalIgnoreCase) ||
-            serviceCommand.Equals(executable,StringComparison.OrdinalIgnoreCase) ||
-            serviceCommand.StartsWith(executable+" ",StringComparison.OrdinalIgnoreCase);
-        if(!trustedBinary)
-            return new(LayerMode.Unavailable,false,"Registered OpenSSH service executable is not the built-in system sshd.exe",
-                "Refusing to validate a different binary using the system default sshd -T output.");
-        if(path.Contains(" -f ",StringComparison.OrdinalIgnoreCase) ||
-           path.Contains("\t-f ",StringComparison.OrdinalIgnoreCase))
-            return new(LayerMode.Unavailable,false,"OpenSSH service uses a custom -f configuration",
-                "Default sshd -T would not verify the running policy. Custom service configuration needs separate validation.");
+        // Default -T is not authoritative when SCM supplies *any* additional
+        // runtime options (including -f, -o and -p), not just an obvious -f.
+        if(!serviceCommand.Equals("\""+executable+"\"",StringComparison.OrdinalIgnoreCase) &&
+           !serviceCommand.Equals(executable,StringComparison.OrdinalIgnoreCase))
+            return new(LayerMode.Unavailable,false,"OpenSSH service command differs from the built-in sshd.exe default invocation",
+                "Custom binary or startup options may change the effective policy; no untrusted executable was launched.");
         string output;
         try
         {
@@ -151,6 +147,11 @@ public static class LocalAccountSecurityAudit
     {
         public uint MinPasswordLength,MaxPasswordAge,MinPasswordAge,ForceLogoff,PasswordHistoryLength;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UserModalsInfo3
+    {
+        public uint LockoutDuration,LockoutObservationWindow,LockoutThreshold;
+    }
     [DllImport("Netapi32.dll",CharSet=CharSet.Unicode)]
     private static extern uint NetUserModalsGet(string? server,uint level,out IntPtr buffer);
     [DllImport("Netapi32.dll")]
@@ -179,14 +180,25 @@ public static class LocalAccountSecurityAudit
             adminMembers=membership.Where(m=>m["GroupComponent"].Contains(nameToken,StringComparison.OrdinalIgnoreCase))
                 .Select(m=>Wire.Clean(m["PartComponent"],180)).Distinct().Order().ToList();
         }
-        uint minimum=0,history=0;bool policyKnown=false;
+        uint minimum=0,history=0,maxAge=0,lockoutThreshold=0;bool policyKnown=false,lockoutKnown=false;
         IntPtr buffer=IntPtr.Zero;
         try
         {
             if(NetUserModalsGet(null,0,out buffer)==0&&buffer!=IntPtr.Zero)
             {
                 var policy=Marshal.PtrToStructure<UserModalsInfo0>(buffer);
-                minimum=policy.MinPasswordLength;history=policy.PasswordHistoryLength;policyKnown=true;
+                minimum=policy.MinPasswordLength;history=policy.PasswordHistoryLength;
+                maxAge=policy.MaxPasswordAge;policyKnown=true;
+            }
+        }
+        finally{if(buffer!=IntPtr.Zero)NetApiBufferFree(buffer);}
+        buffer=IntPtr.Zero;
+        try
+        {
+            if(NetUserModalsGet(null,3,out buffer)==0&&buffer!=IntPtr.Zero)
+            {
+                lockoutThreshold=Marshal.PtrToStructure<UserModalsInfo3>(buffer).LockoutThreshold;
+                lockoutKnown=true;
             }
         }
         finally{if(buffer!=IntPtr.Zero)NetApiBufferFree(buffer);}
@@ -211,15 +223,21 @@ public static class LocalAccountSecurityAudit
         {
             // LastLogon is an opportunistic WMI observation, never proof that accounts are active.
         }
+        var policyAssessment=policyKnown&&lockoutKnown
+            ?IdentityPasswordPolicy.Assess(minimum,history,maxAge,lockoutThreshold)
+            :null;
         bool risky=noPassword>0||builtinAdmins.Length>0||guest.Length>0||
-            (policyKnown&&minimum<12);
+            (policyAssessment?.Risks.Count>0);
         var summary=$"Local accounts={accounts.Count}; enabled without password requirement={noPassword}; "+
             $"built-in Administrator enabled={builtinAdmins.Length}; Guest enabled={guest.Length}; "+
             $"Administrators members={adminMembers.Count}; minimum password length={(policyKnown?minimum.ToString():"unavailable")}; "+
             $"password history={(policyKnown?history.ToString():"unavailable")}; "+
+            $"max password age={(policyKnown?(maxAge==uint.MaxValue?"unlimited":TimeSpan.FromSeconds(maxAge).TotalDays.ToString("F0",CultureInfo.InvariantCulture)+" days"):"unavailable")}; "+
+            $"account lockout threshold={(lockoutKnown?lockoutThreshold.ToString():"unavailable")}; "+
+            $"policy review flags={(policyAssessment==null?"unknown":string.Join(", ",policyAssessment.Risks))}; "+
             $"last-logon over 180 days (where available)={stale.Count}.";
         const string limits="Account/password flags and WMI last-logon are incomplete signals; nonlocal identities, domain/Entra policy, password contents, and full effective group privileges are not established. Review administrator memberships for unexpected access.";
-        return new(!risky&&policyKnown&&administrators!=null,summary+(stale.Count>0? " Potentially stale: "+string.Join(", ",stale.Select(x=>Wire.Clean(x,64)))+".":""),limits,
-            new{Accounts=accounts,Administrators=adminMembers,PasswordPolicy=new{Known=policyKnown,Minimum=minimum,History=history},Stale=stale});
+        return new(!risky&&policyKnown&&lockoutKnown&&administrators!=null,summary+(stale.Count>0? " Potentially stale: "+string.Join(", ",stale.Select(x=>Wire.Clean(x,64)))+".":""),limits,
+            new{Accounts=accounts,Administrators=adminMembers,PasswordPolicy=new{Known=policyKnown,Minimum=minimum,History=history,MaxAge=maxAge,LockoutKnown=lockoutKnown,LockoutThreshold=lockoutThreshold},Stale=stale});
     }
 }
