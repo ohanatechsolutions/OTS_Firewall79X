@@ -20,13 +20,21 @@ public sealed class ResilienceJobs
     private readonly string queue = Paths.At("log-export-queue");
     private readonly Action<int, string, string, string> eventSink;
     private Settings settings;
+    private string? loadError;
     private DateTimeOffset lastPulse = DateTimeOffset.MinValue;
     private const int MaxTrackedSegments = 512;
 
     public ResilienceJobs(Action<int, string, string, string> eventSink)
     {
         this.eventSink = eventSink;
-        settings = Read();
+        try { settings = Read(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+        {
+            settings = new Settings();
+            loadError = Wire.Clean(ex.Message, 180);
+            eventSink(70, "High", "Resilience configuration requires repair",
+                "Corrupt or inaccessible configuration is preserved; scheduled jobs are disabled pending administrator reconfiguration.");
+        }
     }
 
     private Settings Read()
@@ -76,6 +84,7 @@ public sealed class ResilienceJobs
                          ObservedLogSegments = settings.Export?.Destination.Equals(dest, StringComparison.OrdinalIgnoreCase) == true
                             ? settings.ObservedLogSegments : [] };
             Save();
+            loadError = null;
         }
         eventSink(kind == "backup" ? 68 : 70, "Info", "Encrypted resilience job configured",
             "Optional scheduled job enabled with a separately recoverable passphrase. Plaintext credentials are not logged.");
@@ -98,6 +107,7 @@ public sealed class ResilienceJobs
     {
         lock (gate)
         {
+            if (loadError != null) return (false, false, "Resilience configuration rejected: "+loadError);
             var job = kind == "backup" ? settings.Backup : settings.Export;
             if (job == null) return (false, false, "Optional off-device job not configured");
             var age = job.LastSuccessUtc == null ? "Never completed" : "Last verified success " + job.LastSuccessUtc.Value.ToString("O");
