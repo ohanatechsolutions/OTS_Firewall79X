@@ -398,5 +398,30 @@ Test("Section G: event log key rotation preserves linked authenticated history",
     Throws<InvalidDataException>(()=>EventIntegrity.Verify(
         new[]{lines[0],lines[1].Replace("rotated","tampered",StringComparison.Ordinal)},ring));
 });
+
+Test("Section G: malformed DNS, feed and retained-log corpus remains bounded",()=>{
+    var rng=new Random(56065);
+    var detector=new DnsRebindingDetector();
+    var now=DateTimeOffset.UtcNow;
+    var key=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    for(int i=0;i<2500;i++)
+    {
+        var chars=new char[rng.Next(0,180)];
+        for(int j=0;j<chars.Length;j++)chars[j]=(char)rng.Next(1,127);
+        var raw=new string(chars);
+        var finding=detector.Observe(raw,raw,"0",now);
+        Assert(finding.AddressCount<=64);
+        try
+        {
+            _ = EventIntegrity.Verify(new[]{raw},key);
+            Assert(string.IsNullOrWhiteSpace(raw));
+        }
+        catch(InvalidDataException){/* A malformed log must fail closed. */}
+        try{_ = FeodoFeedParser.Parse(raw);}
+        catch(InvalidDataException){/* Unsupported/corrupted input rejected. */}
+    }
+    Assert(!detector.Observe(new string('A',8192),"8.8.8.8","0",now).ParsedAddressAnswer);
+    Assert(!detector.Observe("external.example",new string('A',8192),"0",now).ParsedAddressAnswer);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
