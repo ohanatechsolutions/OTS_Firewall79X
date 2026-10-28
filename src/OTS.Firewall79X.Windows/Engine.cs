@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ServiceProcess;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using OTS.Firewall79X.Core;
@@ -11,6 +12,8 @@ public sealed class Engine : IDisposable
     private EventSensors? sensors;private DeceptionMonitor? deception;private readonly FeodoThreatFeed feed=new();private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
+    private ResourceBudget.Decision governor=ResourceBudget.Evaluate(false,0,0,long.MaxValue,0);
+    private static bool WatchdogRunning(){using var svc=new ServiceController("OTSFirewall79XWatchdog");return svc.Status==ServiceControllerStatus.Running;}
     private readonly Dictionary<int,LayerResult> inventoryCache=[];
     private static readonly HashSet<int> InventoryLayers=[25,26,33,35,37,39,44,46,51,52];
     public Engine()
@@ -81,9 +84,17 @@ public sealed class Engine : IDisposable
                 bool active;lock(gate)active=enabled;
                 if(active)await feed.RefreshIfDueAsync(ct);
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
-                var interval=TimeSpan.FromSeconds(battery?90:30);
-                // Back off after observed high service CPU/memory without inventing per-layer attribution.
-                if((cached.CpuPercent??0)>10||cached.ServiceMemoryMb>256)interval=TimeSpan.FromSeconds(battery?180:60);
+                // Resource governor uses measured service pressure and real free disk space.
+                long free=long.MaxValue,capacity=0;
+                try
+                {
+                    var volume=new DriveInfo(Path.GetPathRoot(Paths.Root)!);
+                    free=volume.AvailableFreeSpace;capacity=volume.TotalSize;
+                }
+                catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or ArgumentException)
+                { recoveryError="Disk capacity query unavailable: "+ex.GetType().Name; }
+                governor=ResourceBudget.Evaluate(battery,cached.CpuPercent??0,cached.ServiceMemoryMb,free,capacity);
+                var interval=governor.CycleInterval;
                 if(active&&DateTimeOffset.UtcNow-lastCycle>=interval)
                 {
                     // Serialize lifecycle and collection. Bounded individual sensors limit expensive work;
@@ -105,7 +116,7 @@ public sealed class Engine : IDisposable
                 lock(gate)
                 {
                     if(!enabled||epoch!=version)return;
-                    if(InventoryLayers.Contains(definition.Id)&&inventoryCache.TryGetValue(definition.Id,out var previous)&&previous.CheckedAt is DateTimeOffset observed&&DateTimeOffset.UtcNow-observed<TimeSpan.FromMinutes(battery?15:5))
+                    if(InventoryLayers.Contains(definition.Id)&&inventoryCache.TryGetValue(definition.Id,out var previous)&&previous.CheckedAt is DateTimeOffset observed&&DateTimeOffset.UtcNow-observed<governor.InventoryInterval)
                     {results.Add(previous);continue;}
                 }
                 var timer=Stopwatch.StartNew();LayerResult r;
@@ -117,14 +128,14 @@ public sealed class Engine : IDisposable
             var score=Posture.Calculate(results,true);
             lock(gate){if(!enabled||epoch!=version)return;
             cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary);
-            if(events.ConsumeSnapshotRequest())
+            if(events.ConsumeSnapshotRequest()&&!governor.DeferNonessentialDiskWork)
             {
                 var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
                 AtomicFile.Write(Path.Combine(folder,$"snapshot-{now:yyyyMMdd-HHmmss}.json"),JsonSerializer.Serialize(cached,Wire.Json));
                 foreach(var old in Directory.GetFiles(folder,"snapshot-*.json").OrderByDescending(File.GetLastWriteTimeUtc).Skip(10))File.Delete(old);
             }
             // Never claim full coverage while required catalog capabilities remain unavailable or limited.
-            if(now>=nextReport){AtomicFile.Write(Paths.At($"report-{now:yyyy-MM-dd}.md"),Reports.Generate(cached));nextReport=NextQuarter(now);events.Add(72,"Info","Quarterly report created","Saved in protected local storage");}
+            if(now>=nextReport&&!governor.DeferNonessentialDiskWork){AtomicFile.Write(Paths.At($"report-{now:yyyy-MM-dd}.md"),Reports.Generate(cached));nextReport=NextQuarter(now);events.Add(72,"Info","Quarterly report created","Saved in protected local storage");}
             }
         }
     }
@@ -135,19 +146,27 @@ public sealed class Engine : IDisposable
         {
             case 11:return deception?.Healthy==true?Good("Protected decoy-file modification watcher is active",limit:"Modification, rename, and deletion detection only; reads are not observed."):new(id,LayerMode.Unavailable,false,"Canary monitor unavailable");
             case 12:case 13:return deception?.Healthy==true?Good($"Loopback-only HTTP decoy listening on 127.0.0.1:{deception.Port}",limit:"Local connections only; no external DNS/URL canary service or off-machine detection."):new(id,LayerMode.Unavailable,false,"Decoy listener unavailable");
-            case 53:return Good("Service monitor cycle running; SCM failure-restart policy configured by installer",limit:recoveryError??"Independent watchdog process is not implemented; SCM owns service recovery.");
-            case 54:return Good("Desktop detects stale service snapshots and connection failures",limit:"Cannot report off-machine when the entire computer or UI is stopped.");
+            case 53:
+                return WatchdogRunning()
+                    ?Good("Independent watchdog Windows service is running; primary SCM recovery policy configured",limit:"Crash-loop throttling is SCM-controlled; physical failure injection and recovery evidence are still required.")
+                    :new(id,LayerMode.Unavailable,false,"Independent watchdog service is stopped or unavailable", "Primary service SCM recovery may still operate.");
+            case 54:
+                return WatchdogRunning()
+                    ?Good("Independent watchdog probes authenticated service status every 20 seconds and records sustained failures in Windows Event Log",limit:"Detects three failed probes or stale active monitoring. Cannot report while Windows is powered off; independent logging and hardware failure tests pending.")
+                    :new(id,LayerMode.Unavailable,false,"Independent dead-man watchdog is not running");
             case 55:case 65:return Good("Service IPC uses local interactive-user ACL, network deny, and impersonated administrator checks for every mutation",LayerMode.Enforcing,"UI is unprivileged; protected operations run in a UAC-elevated helper.");
-            case 56:return Good("Length-limited framed JSON; XML DTDs disabled; bounded event fields",LayerMode.Enforcing,"Full parser fuzzing and isolation of all telemetry processing are incomplete.");
-            case 57:return new(id,LayerMode.Unavailable,false,"Automatic trusted updates are blocked until a trusted publisher/signing identity is provisioned","No executable dependencies are downloaded at launch.");
+            case 56:return Good("Strict bounded IPC schema, framed JSON, XML DTD prohibition, and bounded event fields",LayerMode.Enforcing,"Broader parser and network-input coverage still requires Windows fuzz and hostile-input qualification.");
+            case 57:return new(id,LayerMode.Unavailable,false,"Pinned ECDSA signed-manifest verification is implemented but automatic trusted updates remain disabled until a publisher key and signed release are provisioned","Hash-only or unsigned downloads are not accepted as an authenticated software update. No executable dependencies download at launch.");
             case 58:return File.Exists(Path.Combine(AppContext.BaseDirectory,"SBOM.json"))?Good("Installed package includes a build SBOM",LayerMode.Auditing,"SBOM presence is inventory evidence, not an independent integrity or vulnerability guarantee."):new(id,LayerMode.Unavailable,false,"Build SBOM not present beside service");
             case 59:
                 var active=journal.Entries.Where(e=>e.State=="applied").ToArray();bool intact=active.All(e=>settings.Read(e.Key)==e.Applied);
                 return intact?Good($"{active.Length} journaled settings still match OTS-applied values",LayerMode.Monitoring):new(id,LayerMode.Auditing,false,"An owned setting changed externally; it will be preserved on restore");
             case 60:return Good("Severity-labelled, deduplicated event history connected to dashboard",limit:"Desktop notifications require the running interactive application; external messaging is not configured.");
             case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging or integrity degraded: "+events.LastError,"Stored logs require administrator review; in-memory events are bounded.");
-                return Good($"HMAC-authenticated retained log entries: {events.VerifiedRetainedEvents}; legacy chain discontinuities: {events.LegacyChainGaps}",limit:"Stored records are individually authenticated on service startup; chain links are continued across new restarts. Older builds restarted their chains, so historical end-to-end continuity cannot be guaranteed. Compressed segments rotate after 20; local administrators remain trusted.");
-            case 62:return Good(battery?"Battery mode: 90-second normal telemetry, 15-minute heavy inventory":"AC mode: 30-second normal telemetry, 5-minute heavy inventory",limit:"Backoff follows measured service CPU/memory pressure. Bounded tables and serial audits; adaptive disk scheduling remains incomplete. Cached samples retain their true observation time.");
+                return events.LegacyChainGaps>0
+                    ?new(id,LayerMode.Auditing,false,$"{events.VerifiedRetainedEvents} authenticated records; {events.LegacyChainGaps} gaps in retained history", "Historical continuity cannot be established; protected event log inspection recommended.")
+                    :Good($"HMAC-authenticated retained log entries: {events.VerifiedRetainedEvents}; historical counters restored on restart",limit:"Encrypted DPAPI integrity key is machine-local; finite retention and local administrator control remain trust limitations.");
+            case 62:return Good($"Measured resource governor: {governor.CycleInterval.TotalSeconds:0}s cycle, {governor.InventoryInterval.TotalMinutes:0}m inventory. {governor.Reason}",limit:"Low disk defers optional snapshots and quarterly reports; urgent event logging remains enabled. Full battery, memory, and disk stress qualification still required.");
             case 63:return feed.Active is { } intel
                 ?Good($"Official Feodo C2 IP source timestamp {intel.UpdatedUtc:O}; {intel.Addresses.Count} current indicators",LayerMode.Monitoring,"HTTPS transport and dated source are verified, but the feed is not cryptographically signed. Domain feeds and ruleset validation remain missing.")
                 :new(id,LayerMode.Unavailable,false,feed.Summary,"No stale or unverified indicators are used. No blocking policies are installed.");
