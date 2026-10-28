@@ -233,8 +233,10 @@ Test("Section H encrypted export queue verifies data and preserves retry on fail
     var copy=OffDeviceLogExport.CopyAndVerify(archive,receiver);
     Assert(File.Exists(archive)&&File.Exists(copy),"Do not delete queued evidence before successful remote receipt");
     Assert(SecureArchive.Decrypt(copy,"twelve-chars-or-more").AsSpan().SequenceEqual(System.Text.Encoding.UTF8.GetBytes("security log data")));
-    Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(archive,receiver));
+    Assert(OffDeviceLogExport.CopyAndVerify(archive,receiver)==copy,
+        "Byte-identical delivery receipt should be safe to retry after interrupted queue deletion");
     var data=File.ReadAllBytes(copy);data[^1]^=1;File.WriteAllBytes(copy,data);
+    Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(archive,receiver));
     Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(copy,"twelve-chars-or-more"));
 });
 Test("Section H restored encrypted backup retains last-modified timestamp",()=>{
@@ -258,6 +260,19 @@ Test("Section H generated offline kit preserves verified owned configuration exp
         System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("[]")))));
     Assert(File.ReadAllText(Path.Combine(kit,"RECOVERY_INSTRUCTIONS.md")).Contains("NOT a bootable"));
     Assert(File.ReadAllText(Path.Combine(kit,"RESTORE_OWNED_SETTINGS.ps1")).Contains("--restore"));
+});
+Test("Section H configured-only resilience actions remain administrator-only",()=>{
+    foreach(var command in new[]{"configure-backup","configure-export","disable-backup","disable-export"})
+    {
+        Assert(Wire.Commands.Contains(command));
+        Assert(Wire.RequiresAdmin(command));
+    }
+    var request=new Request("configure-export",Destination=@"Z:\\OTS-logs",Secret="NeverLogThisPassword");
+    using var stream=new MemoryStream();
+    Wire.WriteAsync(stream,request,default).GetAwaiter().GetResult();
+    stream.Position=0;
+    var parsed=Wire.ReadAsync<Request>(stream,1024,default).GetAwaiter().GetResult();
+    Assert(parsed.Command==request.Command&&parsed.Secret==request.Secret&&parsed.Destination==request.Destination);
 });
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
