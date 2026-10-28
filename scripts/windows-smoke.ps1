@@ -15,9 +15,22 @@ function FirewallDigest {
   $rules = @($policy.Rules | ForEach-Object { "$($_.Name)|$($_.Enabled)|$($_.Direction)|$($_.Action)|$($_.ApplicationName)|$($_.RemoteAddresses)|$($_.LocalPorts)" } | Sort-Object)
   return ($rules -join "`n")
 }
+function FirewallSnapshot([string]$Stage) {
+  $current=FirewallDigest
+  $current | Set-Content "artifacts/firewall-$Stage.log"
+  return $current
+}
+function AssertFirewallUnchanged([string]$Stage) {
+  $current=FirewallSnapshot $Stage
+  if($current -ne $before) {
+    $diff=Compare-Object ($before -split "`n") ($current -split "`n") | Out-String -Width 1000
+    $diff | Set-Content "artifacts/firewall-difference-$Stage.log"
+    throw "Firewall rules changed during $Stage. Difference: $diff"
+  }
+}
 $policyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
 $oldAutorun = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
-$before = FirewallDigest
+$before = FirewallSnapshot baseline
 $setup = (Resolve-Path artifacts/release/OTS-Firewall79X-Setup.exe).Path
 $root = "$env:ProgramFiles\OTS Firewall79X"
 $helper = "$root\recovery\OTS.Firewall79X.Recovery.exe"
@@ -26,6 +39,7 @@ Check 'Real PE application and recovery binaries installed' { foreach ($file in 
 Check 'UI launches and remains alive' { $ui=Start-Process "$root\OTS Firewall79X.exe" -PassThru;Start-Sleep -Seconds 5;if($ui.HasExited){throw 'UI exited unexpectedly'};Stop-Process -Id $ui.Id }
 Check 'One-click activation' { RunExe $helper '--on --quiet';Start-Sleep -Seconds 8;if((Get-Service OTSFirewall79X).Status -ne 'Running'){throw 'Service stopped after activation'} }
 Check 'Dark UI screens, compact layout, and search' { dotnet tests/OTS.Firewall79X.UiCapture/bin/Release/net10.0-windows/OTS.Firewall79X.UiCapture.dll artifacts/ui; if($LASTEXITCODE -ne 0){throw 'UI rendering failed'} }
+$null=FirewallSnapshot after-ui
 Check 'Windows telemetry, authenticated IPC and hostile framing' { dotnet tests/OTS.Firewall79X.WindowsTests/bin/Release/net10.0-windows/OTS.Firewall79X.WindowsTests.dll; if($LASTEXITCODE -ne 0){throw 'Windows integration probe failed'} }
 Check 'Standard user can read status but cannot mutate protection' {
   $username = 'OTSProbeUser'
@@ -40,6 +54,7 @@ Check 'Standard user can read status but cannot mutate protection' {
     if($p.ExitCode -ne 0){throw "Nonadministrator boundary probe failed: $($p.ExitCode)"}
   } finally { Remove-LocalUser -Name $username }
 }
+$null=FirewallSnapshot after-user-profile
 Check 'Catalog and transaction self-check' { RunExe $helper '--selftest --quiet' }
 Check 'Pause and resume commands' { RunExe $helper '--pause --quiet';RunExe $helper '--on --quiet' }
 Check 'Off and recovery' { RunExe $helper '--off --quiet';RunExe $helper '--restore --quiet' }
@@ -51,7 +66,7 @@ Check 'Later independent changes are preserved on OFF' {
   if((Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun).NoDriveTypeAutoRun -ne 128){throw 'Later external change overwritten'}
   if($null -eq $oldAutorun){Remove-ItemProperty $policyPath -Name NoDriveTypeAutoRun}else{Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value $oldAutorun -Type DWord}
 }
-Check 'Existing firewall rules preserved' { if ((FirewallDigest) -ne $before) { throw 'Firewall rules changed' } }
+Check 'Existing firewall rules preserved' { AssertFirewallUnchanged after-off }
 Check 'Client rejects an impostor named-pipe server' {
   Stop-Service OTSFirewall79X
   try {
@@ -61,4 +76,4 @@ Check 'Client rejects an impostor named-pipe server' {
 }
 Check 'In-place upgrade preserves recoverability' { RunExe $setup '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=artifacts/upgrade.log';RunExe $helper '--on --quiet';RunExe $helper '--off --quiet' }
 Check 'Clean uninstall removes service and application' { RunExe "$root\unins000.exe" '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART';if(Get-Service OTSFirewall79X -ErrorAction SilentlyContinue){throw 'Service remains'};if(Test-Path "$root\OTS Firewall79X.exe"){throw 'Application remains'} }
-Check 'Firewall rules preserved after uninstall' { if ((FirewallDigest) -ne $before) { throw 'Firewall rules changed during uninstall' } }
+Check 'Firewall rules preserved after uninstall' { AssertFirewallUnchanged after-uninstall }

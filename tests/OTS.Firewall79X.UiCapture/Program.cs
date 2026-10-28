@@ -28,7 +28,7 @@ internal static class Program
                 {
                     tabs.SelectedIndex=i;await Task.Delay(350);window.UpdateLayout();
                     Capture(window,Path.Combine(output,$"{i:00}-desktop.png"));
-                    if(i==0)Capture(window,Path.Combine(output,"08-dashboard-8k.png"),1380,900,7680.0/1380);
+                    if(i==0)Capture(window,Path.Combine(output,"08-dashboard-8k.png"),1600,900,4.8);
                 }
                 tabs.SelectedIndex=0;window.Width=1000;window.Height=700;await Task.Delay(350);window.UpdateLayout();Capture(window,Path.Combine(output,"07-compact.png"),1000,700);
                 // Search must still route to the real filtered layer list.
@@ -45,8 +45,19 @@ internal static class Program
     private static void Capture(Window window,string path,double width=1380,double height=900,double scale=1)
     {
         var root=(FrameworkElement)window.Content;
-        root.Width=width;root.Height=height;root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();
-        var bitmap=new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth*scale),(int)Math.Ceiling(root.ActualHeight*scale),96*scale,96*scale,PixelFormats.Pbgra32);
-        bitmap.Render(root);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(path);png.Save(file);
+        root.SetValue(System.Windows.Documents.TextElement.FontFamilyProperty,window.FontFamily);
+        root.SetValue(System.Windows.Documents.TextElement.FontSizeProperty,window.FontSize);
+        // Detach only during synchronous rendering so the runner's native window cannot clip the preview.
+        window.Content=null;
+        try
+        {
+            root.Width=width;root.Height=height;root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();
+            var bitmap=new RenderTargetBitmap((int)Math.Ceiling(width*scale),(int)Math.Ceiling(height*scale),96*scale,96*scale,PixelFormats.Pbgra32);
+            bitmap.Render(root);
+            var corner=new byte[4];bitmap.CopyPixels(new Int32Rect(bitmap.PixelWidth-1,bitmap.PixelHeight-1,1,1),corner,4,0);
+            if(corner[3]!=255)throw new InvalidOperationException("Preview was clipped or has a transparent background");
+            var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(path);png.Save(file);
+        }
+        finally { root.Width=double.NaN;root.Height=double.NaN;window.Content=root;window.UpdateLayout(); }
     }
 }
