@@ -83,6 +83,17 @@ public sealed class DeceptionMonitor : IDisposable
                 File.WriteAllText(credentials,
                     "OTS Firewall79X HONEYTOKEN - not valid for any service.\n" +
                     "username=OTS-CANARY-NONFUNCTIONAL\npassword=NOT-A-REAL-CREDENTIAL\n");
+
+            // Existing canaries are never silently accepted as clean after a restart.
+            // This static decoy has no secrets; content drift signals tampering, but
+            // do not overwrite evidence or change actual authentication state.
+            const string expectedCredentials =
+                "OTS Firewall79X HONEYTOKEN - not valid for any service.\n" +
+                "username=OTS-CANARY-NONFUNCTIONAL\npassword=NOT-A-REAL-CREDENTIAL\n";
+            if (File.Exists(credentials) &&
+                !string.Equals(File.ReadAllText(credentials), expectedCredentials, StringComparison.Ordinal))
+                events.Add(11, "High", "Existing canary altered",
+                    "The persistent inert credential decoy differed from its expected content on activation");
             // URL is regenerated because the loopback port is assigned dynamically.
             File.WriteAllText(urlFile, $"http://127.0.0.1:{Port}{CanaryPath}\n");
             if (!File.Exists(dnsFile))
@@ -129,6 +140,7 @@ public sealed class DeceptionMonitor : IDisposable
         {
             listener.Stop();
             stop.Cancel();
+            RollbackOwnedAudit();
             throw;
         }
     }
@@ -398,6 +410,50 @@ public sealed class DeceptionMonitor : IDisposable
         catch { return "owning process unavailable (IP Helper query failed)"; }
     }
 
+    // SACL ownership is persisted before setting a rule so even an interrupted
+    // install can recover without changing unrelated audit rules.
+    private void RollbackOwnedAudit()
+    {
+        try
+        {
+            if (!File.Exists(ownershipFile)) return;
+            var marker = new FileInfo(ownershipFile);
+            if (marker.Length > 8192)
+                throw new InvalidDataException("Owned audit-rule marker exceeds size limit");
+            var remaining = new List<string>();
+            foreach (string path in File.ReadAllLines(ownershipFile).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!expected.ContainsKey(path) || !File.Exists(path))
+                {
+                    if (expected.ContainsKey(path) && !File.Exists(path)) continue;
+                    events.Add(11, "Warning", "Unexpected audit ownership entry",
+                        "A non-owned path was found in the canary audit journal; no changes were made to that path");
+                    continue;
+                }
+                try
+                {
+                    var file = new FileInfo(path);
+                    var security = file.GetAccessControl(AccessControlSections.Audit);
+                    security.RemoveAuditRuleSpecific(auditRule);
+                    file.SetAccessControl(security);
+                }
+                catch (Exception ex)
+                {
+                    remaining.Add(path);
+                    events.Add(11, "Warning", "Canary audit rollback incomplete",
+                        Wire.Clean(Path.GetFileName(path) + ": " + ex.Message, 160));
+                }
+            }
+            if (remaining.Count == 0) File.Delete(ownershipFile);
+            else File.WriteAllLines(ownershipFile, remaining);
+        }
+        catch (Exception ex)
+        {
+            events.Add(11, "Warning", "Canary audit rollback incomplete",
+                Wire.Clean(ex.Message, 160));
+        }
+    }
+
     public void Dispose()
     {
         if (disposed) return;
@@ -408,27 +464,7 @@ public sealed class DeceptionMonitor : IDisposable
         try { Task.WaitAll(new[] { server, verifier }, TimeSpan.FromSeconds(3)); }
         catch (AggregateException) { /* Best-effort cancellation; never block OFF. */ }
 
-        // Compare before restoring only the exact canary audit entries we own.
-        try
-        {
-            if (File.Exists(ownershipFile))
-            {
-                foreach (var path in File.ReadAllLines(ownershipFile))
-                {
-                    if (!expected.ContainsKey(path) || !File.Exists(path)) continue;
-                    var file = new FileInfo(path);
-                    var security = file.GetAccessControl(AccessControlSections.Audit);
-                    security.RemoveAuditRuleSpecific(auditRule);
-                    file.SetAccessControl(security);
-                }
-                File.Delete(ownershipFile);
-            }
-        }
-        catch (Exception ex)
-        {
-            events.Add(11, "Warning", "Canary audit rollback incomplete",
-                "The service could not remove its owned canary audit rule: " + Wire.Clean(ex.Message, 120));
-        }
+        RollbackOwnedAudit();
         stop.Dispose();
         slots.Dispose();
     }
