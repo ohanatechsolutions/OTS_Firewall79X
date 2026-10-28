@@ -346,5 +346,36 @@ Test("Section D execution indicators require suspicious command or parent lineag
     Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
     Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
 });
+
+Test("Section G: exact owned-rule identities never delete drifted or lookalike policies",()=>{
+    const string prefix=OwnedFirewallRule.InboundPrefix;
+    const string intel=OwnedFirewallRule.IntelligencePrefix;
+    bool Mine(string name,string description,string remote,int direction=1,int action=0,int protocol=256,
+        int profiles=int.MaxValue,bool enabled=true)=>
+        OwnedFirewallRule.Matches(name,description,remote,direction,action,protocol,profiles,enabled);
+    Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8"));
+    Assert(Mine(intel+"1.1.1.1",OwnedFirewallRule.IntelligenceDescription,"1.1.1.1",2));
+    Assert(!Mine(prefix+"8.8.8.8","modified by third party","8.8.8.8"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",2));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,1));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,0,6));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,0,256,1));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,0,256,int.MaxValue,false));
+    Assert(!Mine(intel+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",2));
+    Assert(!Mine(intel+"2606:4700:4700::1111",OwnedFirewallRule.IntelligenceDescription,"2606:4700:4700::1111",2));
+    foreach(var address in new[]{"127.0.0.1","10.0.0.1","192.0.2.10","::1","not-an-ip","8.8.8.8,1.1.1.1","8.8.8.8/32"})
+        Assert(!Mine(prefix+address,OwnedFirewallRule.InboundDescription,address));
+    var random=new Random(79);
+    for(int i=0;i<3000;i++)
+    {
+        var chars=new char[random.Next(0,95)];
+        for(int j=0;j<chars.Length;j++)chars[j]=(char)random.Next(1,128);
+        string name=prefix+new string(chars);
+        // Unknown name/address must never be treated as an OTS-created rule.
+        if(!name.Equals(prefix+"8.8.8.8",StringComparison.Ordinal))
+            Assert(!Mine(name,OwnedFirewallRule.InboundDescription,"8.8.8.8"));
+    }
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
