@@ -15,7 +15,7 @@ public partial class MainWindow : Window
 {
     private sealed record Row(int Id,string Name,string Category,string Mode,string Health,string Evidence,double? Duration);
     private DesktopNotifications? notifications;private DateTimeOffset lastAlert=DateTimeOffset.UtcNow,lastNotification=DateTimeOffset.MinValue;
-    private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private ExternalExposureAudit.Result? exposureResult;private readonly DispatcherTimer timer;private bool ready;
+    private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private ExternalExposureAudit.Result? exposureResult;private PackageVulnerabilityAudit.Result? nugetAuditResult;private readonly DispatcherTimer timer;private bool ready;
     private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
     public MainWindow()
     {
@@ -54,6 +54,13 @@ public partial class MainWindow : Window
                 dashboard=dashboard with{Layers=dashboard.Layers.Select(l=>l.Id==49
                     ?l with{Evidence=l.Evidence+"; "+evidence.Evidence,
                              Limitation=l.Limitation+"; "+evidence.Limitation}
+                    :l).ToList()};
+            }
+            if(nugetAuditResult is { } osv&&dashboard.Enabled)
+            {
+                dashboard=dashboard with{Layers=dashboard.Layers.Select(l=>l.Id==52
+                    ?l with{Evidence=l.Evidence+"; "+osv.Evidence,
+                             Limitation=l.Limitation+"; "+osv.Limitation}
                     :l).ToList()};
             }
             ProtectionText.Text=stale?"Protection status stale — service health requires attention":dashboard.Protection;
@@ -127,6 +134,35 @@ public partial class MainWindow : Window
                 ". Local listeners do not demonstrate external reachability. No safety conclusion can be drawn.";
         }
         finally {if(sender is System.Windows.Controls.Button restoreButton)restoreButton.IsEnabled=true;}
+    }
+    private async void NuGetAdvisoryClick(object sender,RoutedEventArgs e)
+    {
+        var select=new OpenFileDialog
+        {
+            Title="Select a NuGet packages.lock.json that you authorize OTS to inspect",
+            Filter="NuGet lockfiles (packages.lock.json)|packages.lock.json",
+            Multiselect=false
+        };
+        if(select.ShowDialog()!=true)return;
+        const string notice="This check reads the selected NuGet packages.lock.json and sends package names and exact resolved versions to the public OSV.dev vulnerability API. No source code, credentials or local file paths are transmitted. Published advisory results may be incomplete and cannot prove the software is safe. Continue?";
+        if(MessageBox.Show(notice,"Optional NuGet vulnerability intelligence",MessageBoxButton.YesNo,MessageBoxImage.Information)!=MessageBoxResult.Yes)
+            return;
+        if(sender is Button action)action.IsEnabled=false;
+        try
+        {
+            NuGetAdvisoryResult.Text="Checking exact NuGet package versions against published OSV advisories…";
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            nugetAuditResult=await PackageVulnerabilityAudit.QueryAsync(http,select.FileName,timeout.Token);
+            NuGetAdvisoryResult.Text=nugetAuditResult.Evidence+" "+nugetAuditResult.Limitation;
+            await Refresh();
+        }
+        catch(Exception ex)
+        {
+            nugetAuditResult=null;
+            NuGetAdvisoryResult.Text="NuGet advisory lookup failed: "+ex.GetType().Name+
+                ". Software vulnerability status remains unknown; no scan has been certified.";
+        }
+        finally{if(sender is Button restoreAction)restoreAction.IsEnabled=true;}
     }
     private async void SecretsClick(object sender,RoutedEventArgs e)
     {
