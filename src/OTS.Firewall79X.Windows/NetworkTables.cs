@@ -9,6 +9,7 @@ public static class NetworkTables
 {
     [DllImport("iphlpapi.dll",SetLastError=true)] private static extern uint GetExtendedTcpTable(IntPtr table,ref int size,bool order,int family,int tableClass,uint reserved);
     [DllImport("iphlpapi.dll")] private static extern uint GetIpNetTable(IntPtr table,ref int size,bool order);
+    [DllImport("iphlpapi.dll",SetLastError=true)] private static extern uint GetExtendedUdpTable(IntPtr table,ref int size,bool order,int family,int tableClass,uint reserved);
     public static List<Connection> Connections()
     {
         List<Connection> result=[];
@@ -30,6 +31,41 @@ public static class NetworkTables
                     else{local=new IPAddress(b.AsSpan(p,16),BitConverter.ToUInt32(b,p+16));lp=Port(b,p+20);remote=new IPAddress(b.AsSpan(p+24,16),BitConverter.ToUInt32(b,p+40));rp=Port(b,p+44);state=BitConverter.ToInt32(b,p+48);pid=BitConverter.ToInt32(b,p+52);}
                     string process="Unavailable";try{using var proc=Process.GetProcessById(pid);process=proc.ProcessName;}catch(ArgumentException){process="Exited";}catch(Win32Exception){process="Access restricted";}
                     result.Add(new(pid,process,$"[{local}]:{lp}",$"[{remote}]:{rp}",state==2?"Listening":state==5?"Established":state.ToString()));
+                }
+            }
+            finally{Marshal.FreeHGlobal(memory);}
+        }
+        return result;
+    }
+    public static List<Connection> UdpSockets()
+    {
+        List<Connection> result=[];
+        foreach(int family in new[]{2,23})
+        {
+            int size=0;uint rc=GetExtendedUdpTable(IntPtr.Zero,ref size,false,family,1,0);
+            if(rc is not (0 or 122))throw new Win32Exception((int)rc,"UDP table API unavailable");
+            if(size<4||size>8*1024*1024)throw new InvalidDataException("Invalid UDP table budget");
+            var memory=Marshal.AllocHGlobal(size);
+            try
+            {
+                rc=GetExtendedUdpTable(memory,ref size,false,family,1,0);
+                if(rc!=0)throw new Win32Exception((int)rc,"UDP table query failed");
+                var bytes=new byte[size];Marshal.Copy(memory,bytes,0,size);
+                int count=BitConverter.ToInt32(bytes,0),stride=family==2?12:28;
+                if(count<0||4L+(long)count*stride>size)throw new InvalidDataException("Invalid UDP table bounds");
+                for(int i=0;i<count&&result.Count<8000;i++)
+                {
+                    int p=4+i*stride;
+                    IPAddress ip=family==2
+                        ?new IPAddress(bytes.AsSpan(p,4))
+                        :new IPAddress(bytes.AsSpan(p,16),BitConverter.ToUInt32(bytes,p+16));
+                    int port=Port(bytes,p+(family==2?4:20));
+                    int pid=BitConverter.ToInt32(bytes,p+(family==2?8:24));
+                    string process="Unavailable";
+                    try{using var proc=Process.GetProcessById(pid);process=proc.ProcessName;}
+                    catch(ArgumentException){process="Exited";}
+                    catch(Win32Exception){process="Access restricted";}
+                    result.Add(new(pid,process,$"[{ip}]:{port}","","UDP Bound"));
                 }
             }
             finally{Marshal.FreeHGlobal(memory);}

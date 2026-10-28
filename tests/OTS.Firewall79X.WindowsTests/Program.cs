@@ -50,6 +50,7 @@ try
     if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
     if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
     policy.Dispose();
+    var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
     {

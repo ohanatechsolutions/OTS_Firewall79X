@@ -63,3 +63,7 @@ restart, identify rules beginning with **OTS Firewall79X temporary inbound sourc
 in Windows Defender Firewall with Advanced Security. Remove *only* rules with
 this exact prefix, or restart the OTS service to attempt owner-scoped cleanup.
 Do not disable the Windows Firewall to recover connectivity.
+
+## Native visibility additions
+
+Windows `GetExtendedUdpTable` now collects PID-attributed IPv4/IPv6 **bound UDP endpoints**, not UDP flows or inspected payloads. IPv6/UDP enumeration failure is exposed as unavailable rather than quietly counted as parity. The read-only Public-profile audit flags broad inbound SMB 139/445 allow rules; policy precedence, share configuration, and active network category still require verification. Native Bluetooth radio enumeration and `BluetoothIsDiscoverable` / `BluetoothIsConnectable` report radio state in addition to PnP inventory changes. These observations do not constitute pairing approval or authentication records.

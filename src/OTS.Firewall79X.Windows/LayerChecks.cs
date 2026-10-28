@@ -19,13 +19,16 @@ public sealed class LayerChecks
     private SecurityDeviceAudit.Result DeviceStatus()=>deviceSnapshot??=SecurityDeviceAudit.Read();
     public List<Connection> Connections {get;private set;}=[];
     public string? NetworkError {get;private set;}
+    public string? UdpError {get;private set;}
+    private bool? bluetoothDiscoverable;
     public FirewallAudit? Firewall {get;}=new();
     private (bool Safe,string Description,List<FirewallAudit.Rule> Rules)? firewall;
     public LayerChecks(EventStore events){this.events=events;}
     public void Prepare()
     {
-        firewall=null;NetworkError=null;deviceSnapshot=null;
+        firewall=null;NetworkError=null;UdpError=null;deviceSnapshot=null;
         try{Connections=NetworkTables.Connections();TrackNetwork();TrackIntel();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
+        try{Connections.AddRange(NetworkTables.UdpSockets());}catch(Exception ex){UdpError=ex.Message;}
         try{firewall=Firewall!.Read();}catch(Exception ex){events.Add(1,"Warning","Firewall query failed",ex.Message);}
     }
     private void TrackNetwork()
@@ -87,6 +90,21 @@ public sealed class LayerChecks
             case 1:
                 if(firewall==null)return Missing(id,"Windows Firewall state could not be read");
                 return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Windows Firewall is enforcing inbound default deny on all three profiles. Rule precedence, policy conflicts, exceptions and statefulness are not independently certified."):Bad(id,firewall.Value.Description,"One or more profiles allow inbound or have firewall disabled. No automatic blanket policy overwrite.");
+            case 6:
+                if(firewall==null)return Missing(id,"Windows Firewall state unavailable for IPv6 policy audit");
+                if(NetworkError!=null||UdpError!=null)return Missing(id,"TCP/UDP IPv4/IPv6 endpoint enumeration incomplete: "+(NetworkError??UdpError));
+                return firewall.Value.Safe
+                    ?Good(id,$"All firewall profiles have inbound default deny; {Connections.Count(c=>c.State=="UDP Bound")} IPv4/IPv6 UDP bindings observed",LayerMode.Monitoring,"Firewall profile policies apply to both families; raw ICMPv6, fragmentation, all WFP policies and recovery parity have not been independently verified.")
+                    :Bad(id,firewall.Value.Description,"A disabled/permissive profile undermines both address families.");
+            case 9:
+                if(firewall==null)return Missing(id,"Windows Firewall policy unavailable");
+                bool publicSmb=firewall.Value.Rules.Any(r=>r.Enabled&&r.Direction=="1"&&r.Action=="1"&&r.Protocol=="6"&&
+                    int.TryParse(r.Profiles,out int profiles)&&(profiles&4)!=0&&
+                    r.RemoteAddresses is "*" or "" && r.LocalPorts.Split(',').Any(p=>p.Trim() is "139" or "445"));
+                if(!firewall.Value.Safe)return Bad(id,firewall.Value.Description,"Inbound firewall defaults do not enforce a safe baseline on every profile.");
+                return publicSmb
+                    ?Bad(id,"Broad SMB inbound allow rule is configured for the Public profile","An overlapping block can change effective behavior; review exposed sharing and remote access.")
+                    :Good(id,"All Windows Firewall profiles enabled/default-deny; no broad TCP 139/445 Public-profile allow observed",LayerMode.Auditing,"Read-only rule review; not proof of effective GPO, network category, broader sharing protocols or automatic untrusted Wi-Fi hardening.");
             case 2:case 3:
                 if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security event subscription is unavailable");
                 if(!AuditPolicy.Coverage(id).Enabled)return Missing(id,"Filtering Platform Connection failure auditing is disabled; source restrictions are not reliably triggered.");
@@ -116,7 +134,15 @@ public sealed class LayerChecks
                     foreach(var device in currentBt.Except(bluetoothPrevious).Take(32))
                         events.Add(10,"Warning","New Bluetooth PnP device observed","Device inventory changed; pairing/discoverability and connection authorization are not attested. ID fingerprint "+SystemQueries.Fingerprint(device)[..16]);
                 bluetoothPrevious=currentBt;Changed(id,"Bluetooth device inventory",bt);
-                return bt.Count==0?Na(id,"No Bluetooth device reported by Windows"):Good(id,$"{bt.Count} Bluetooth PnP entries and changes monitored",LayerMode.Monitoring,"A PnP addition is not proof of new pairing. Discoverability, pairing authorization and active connection telemetry require a supported native monitor and hardware validation.");
+                var radio=BluetoothRadioAudit.Read();
+                if(bt.Count==0&&radio.Available&&radio.Radios==0)return Na(id,"No active native Bluetooth radio or Bluetooth PnP inventory");
+                if(!radio.Available)return Missing(id,radio.Evidence);
+                bool visible=radio.Discoverable>0;
+                if(visible&&bluetoothDiscoverable!=true)
+                    events.Add(10,"Warning","Bluetooth radio discoverable","Windows native API reports a discoverable local Bluetooth radio; verify whether discovery is intentional.");
+                bluetoothDiscoverable=visible;
+                return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence,LayerMode.Monitoring,
+                    "Native discovery/connectability and PnP changes are monitored; pairing authorization and authenticated remote connections are not independently confirmed.");
             case 11:case 12:case 13:return Missing(id,"Deception monitor has not reported health");
             case 14:return Missing(id,"An established packet intrusion-detection engine and validated network signature set are not yet integrated.");
             case 15:return Channel(id,"Security","Classifies supported Windows authentication, privilege, and blocked-connection events; broad ATT&CK correlation is incomplete.");
