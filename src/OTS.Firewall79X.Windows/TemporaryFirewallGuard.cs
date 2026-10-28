@@ -13,8 +13,8 @@ namespace OTS.Firewall79X.Windows;
 /// </summary>
 public sealed class TemporaryFirewallGuard : IDisposable
 {
-    private const string Prefix=OwnedFirewallRule.InboundPrefix;
-    private const string IntelPrefix=OwnedFirewallRule.IntelligencePrefix;
+    private const string Prefix=TemporaryRuleIdentity.InboundPrefix;
+    private const string IntelPrefix=TemporaryRuleIdentity.OutboundPrefix;
     private readonly object gate=new();
     private readonly Dictionary<string,DateTimeOffset> active=new(StringComparer.Ordinal);
     private readonly Dictionary<string,DateTimeOffset> intelligence=new(StringComparer.Ordinal);
@@ -47,42 +47,39 @@ public sealed class TemporaryFirewallGuard : IDisposable
         }
         return result;
     }
-    /// <summary>Enumerate only recognized OTS rule shapes. Never remove a spoofed
-    /// prefix or a rule changed by another process after creation.</summary>
-    private static (HashSet<string> Verified, int Changed) InspectOwned(dynamic policy)
+    private static (List<string> Owned,bool Collision) InspectOwned(dynamic policy,string? proposed=null)
     {
-        var verified=new HashSet<string>(StringComparer.Ordinal);
-        int changed=0, inspected=0;
+        var names=new List<string>();
+        bool collision=false;
+        int inspected=0;
         foreach(dynamic rule in policy.Rules)
         {
             try
             {
                 if(++inspected>20000)throw new InvalidDataException("Firewall rule enumeration budget exceeded");
                 string name=(string)rule.Name;
-                if(!OwnedFirewallRule.HasReservedName(name))continue;
-                bool owned=OwnedFirewallRule.Matches(
-                    name, (string?)rule.Description, (string?)rule.RemoteAddresses,
-                    (int)rule.Direction, (int)rule.Action, (int)rule.Protocol,
-                    (int)rule.Profiles, (bool)rule.Enabled);
-                if(owned)
-                {
-                    if(!verified.Add(name))throw new InvalidDataException("Ambiguous duplicate OTS rule name");
-                    if(verified.Count>128)throw new InvalidDataException("Unexpected number of verified OTS rules");
-                }
-                else changed++;
+                if(proposed!=null && name.Equals(proposed,StringComparison.Ordinal))collision=true;
+                if(!TemporaryRuleIdentity.UsesReservedName(name))continue;
+                bool isOwned=TemporaryRuleIdentity.IsOwned(name,(string?)rule.Description,
+                    (string?)rule.Grouping,(string?)rule.RemoteAddresses,
+                    (int)rule.Direction,(int)rule.Action,(int)rule.Protocol);
+                if(!isOwned)throw new InvalidDataException("A firewall rule uses a reserved OTS name without verifiable ownership: "+Wire.Clean(name,100));
+                names.Add(name);
             }
             finally { Marshal.ReleaseComObject(rule); }
+            if(names.Count>128)throw new InvalidDataException("Unexpected number of owned rules; refusing bulk deletion");
         }
-        return (verified,changed);
+        return (names,collision);
     }
-    private int RemoveOwned(dynamic policy)
+    private static void RemoveOwned(dynamic policy)
     {
-        var inspection=InspectOwned((object)policy);
-        foreach(var name in inspection.Verified)policy.Rules.Remove(name);
-        if(inspection.Changed>0)
-            events.Add(59,"Warning","Modified or spoofed OTS rule preserved",
-                $"{inspection.Changed} reserved-name firewall rules did not match their expected safe OTS properties and were not removed.");
-        return inspection.Changed;
+        (List<string> Owned,bool Collision) state=InspectOwned(policy);
+        foreach(var name in state.Owned)policy.Rules.Remove(name);
+    }
+    private static void RequireNoCollision(dynamic policy,string proposed)
+    {
+        if(((ValueTuple<List<string>,bool>)InspectOwned(policy,proposed)).Item2)
+            throw new InvalidOperationException("An existing firewall rule uses the target OTS name; refusing replacement");
     }
     public void Start()
     {
@@ -94,10 +91,8 @@ public sealed class TemporaryFirewallGuard : IDisposable
             dynamic? policy=null;
             try
             {
-                policy=Policy();var conflicts=RemoveOwned(policy);
-                Operational=true;
-                Health=conflicts==0?"Exact rule ownership and startup cleanup verified":
-                    $"{conflicts} altered/spoofed rules preserved for administrator review";
+                policy=Policy();RemoveOwned(policy);
+                Operational=true;Health="Rule ownership and startup cleanup verified";
             }
             catch(Exception ex)
             {
@@ -120,12 +115,13 @@ public sealed class TemporaryFirewallGuard : IDisposable
             dynamic? policy=null;dynamic? rule=null;
             try
             {
-                policy=Policy();
+                policy=Policy();RequireNoCollision(policy,RuleName(finding.Address));
                 var type=Type.GetTypeFromProgID("HNetCfg.FWRule") ??
                     throw new PlatformNotSupportedException("Windows Firewall rule API unavailable");
                 rule=Activator.CreateInstance(type)!;
                 rule.Name=RuleName(finding.Address);
-                rule.Description=OwnedFirewallRule.InboundDescription;
+                rule.Description=TemporaryRuleIdentity.Marker+"inbound";
+                rule.Grouping=TemporaryRuleIdentity.Group;
                 rule.Direction=1; // NET_FW_RULE_DIR_IN
                 rule.Action=0; // NET_FW_ACTION_BLOCK
                 rule.Protocol=256; // NET_FW_IP_PROTOCOL_ANY (IPv4 or IPv6)
@@ -161,12 +157,13 @@ public sealed class TemporaryFirewallGuard : IDisposable
             dynamic? policy=null;dynamic? rule=null;
             try
             {
-                policy=Policy();
+                policy=Policy();RequireNoCollision(policy,IntelPrefix+address);
                 var type=Type.GetTypeFromProgID("HNetCfg.FWRule")??
                     throw new PlatformNotSupportedException("Windows Firewall rule API unavailable");
                 rule=Activator.CreateInstance(type)!;
                 rule.Name=IntelPrefix+address;
-                rule.Description=OwnedFirewallRule.IntelligenceDescription;
+                rule.Description=TemporaryRuleIdentity.Marker+"intelligence";
+                rule.Grouping=TemporaryRuleIdentity.Group;
                 rule.Direction=2;  // NET_FW_RULE_DIR_OUT
                 rule.Action=0;     // NET_FW_ACTION_BLOCK
                 rule.Protocol=256; // Any protocol
@@ -201,21 +198,21 @@ public sealed class TemporaryFirewallGuard : IDisposable
             try
             {
                 policy=Policy();
-                var inspection=InspectOwned((object)policy);
+                (List<string> Owned,bool Collision) verification=InspectOwned((object)policy);
                 foreach(var pair in active.Where(p=>p.Value<=now).ToArray())
                 {
                     string name=RuleName(pair.Key);
-                    if(inspection.Verified.Contains(name))policy.Rules.Remove(name);
+                    if(verification.Owned.Contains(name))policy.Rules.Remove(name);
                     else events.Add(59,"Warning","Modified or missing inbound rule preserved",
-                        $"Expired OTS rule for {pair.Key} did not pass exact ownership validation; no third-party rule was removed.");
+                        "An OTS named rule failed the exact ownership verification for "+pair.Key);
                     active.Remove(pair.Key);
                 }
                 foreach(var pair in intelligence.Where(p=>p.Value<=now||!intelligenceFresh).ToArray())
                 {
                     string name=IntelPrefix+pair.Key;
-                    if(inspection.Verified.Contains(name))policy.Rules.Remove(name);
-                    else events.Add(59,"Warning","Modified or missing intelligence rule preserved",
-                        $"OTS rule for {pair.Key} did not pass exact ownership validation; no third-party rule was removed.");
+                    if(verification.Owned.Contains(name))policy.Rules.Remove(name);
+                    else events.Add(59,"Warning","Modified or missing outbound rule preserved",
+                        "An OTS named rule failed the exact ownership verification for "+pair.Key);
                     intelligence.Remove(pair.Key);
                 }
             }
@@ -235,10 +232,8 @@ public sealed class TemporaryFirewallGuard : IDisposable
             dynamic? policy=null;
             try
             {
-                policy=Policy();var conflicts=RemoveOwned(policy);
-                active.Clear();intelligence.Clear();
-                Health=conflicts==0?"All verified OTS temporary restrictions restored":
-                    $"{conflicts} modified/spoofed rules preserved for administrator review";
+                policy=Policy();RemoveOwned(policy);
+                active.Clear();intelligence.Clear();Health="All OTS temporary restrictions restored";
             }
             catch(Exception ex)
             {
