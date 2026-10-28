@@ -10,6 +10,9 @@ public sealed class EventSensors : IDisposable
     private readonly object sync=new();private readonly Dictionary<string,Queue<(DateTimeOffset Time,int Port)>> attempts=[];
     private readonly Dictionary<string,Queue<DateTimeOffset>> failures=[];
     private readonly AuditedFileAccess access=new();
+    private readonly DnsRebindingDetector dnsRebinding=new();
+    private int parsedDnsResponses;
+    public int ObservedDnsResponses=>Volatile.Read(ref parsedDnsResponses);
     private int fileReadEvents, browserFileEvents;
     public int ObservedAuditedFileReads=>Volatile.Read(ref fileReadEvents);
     public int ObservedAuditedBrowserFileReads=>Volatile.Read(ref browserFileEvents);
@@ -22,7 +25,7 @@ public sealed class EventSensors : IDisposable
         Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
         Watch("Microsoft-Windows-PowerShell/Operational","*[System[(EventID=4104)]]");
-        Watch("Microsoft-Windows-DNS-Client/Operational","*");
+        Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3008)]]");
     }
     private void Watch(string channel,string query)
     {
@@ -81,7 +84,16 @@ public sealed class EventSensors : IDisposable
         else if(channel.Contains("Windows Defender"))events.Add(76,record.Id==1116?"High":"Info","Microsoft Defender event",$"Event {record.Id}; consult Windows Security Protection History for detection and remediation details");
         else if(channel.Contains("CodeIntegrity"))events.Add(26,"High","Code-integrity warning",$"Windows code-integrity event {record.Id}");
         else if(channel.Contains("PowerShell")){var text=Get("ScriptBlockText");var indicator=Detections.ExecutionIndicator("powershell.exe",text);if(indicator!=null)events.Add(36,"Warning","PowerShell indicator",indicator);}
-        else if(channel.Contains("DNS-Client"))events.Add(16,"Info","DNS observation",$"{Get("QueryName")} {Get("QueryStatus")}");
+        else if(channel.Contains("DNS-Client"))
+        {
+            DnsRebindingDetector.Finding finding;
+            lock(sync)finding=dnsRebinding.Observe(Get("QueryName"),Get("QueryResults"),Get("QueryStatus"),now);
+            if(finding.ParsedAddressAnswer)Interlocked.Increment(ref parsedDnsResponses);
+            if(finding.SuspiciousTransition)
+                events.Add(8,"Warning","Possible DNS rebinding pattern",
+                    $"A publicly resolved DNS name subsequently returned a local/private address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
+            events.Add(16,"Info","DNS observation",$"{Get("QueryName")} {Get("QueryStatus")}");
+        }
         else events.Add(25,"Warning","Service configuration changed",$"Windows event {record.Id}; service {Get("ServiceName")}");
     }
     public bool Has(string channel){lock(sync)return Health.GetValueOrDefault(channel,"").StartsWith("Subscribed");}

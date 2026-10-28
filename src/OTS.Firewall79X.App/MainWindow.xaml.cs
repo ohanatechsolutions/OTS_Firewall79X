@@ -19,7 +19,20 @@ public partial class MainWindow : Window
     private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
     public MainWindow()
     {
-        InitializeComponent();SourceInitialized+=(_,_)=>NativeChrome.Apply(this);ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};
+        InitializeComponent();SourceInitialized+=(_,_)=>NativeChrome.Apply(this);ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{FitWindowToDisplay();notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};
+    }
+    private void FitWindowToDisplay()
+    {
+        // WPF device-independent working-area bounds; avoid covering the taskbar
+        // or launching taller than a 768p display. Content panels already scroll.
+        var work=SystemParameters.WorkArea;
+        if(work.Width<640||work.Height<480)return;
+        MinWidth=Math.Min(MinWidth,work.Width*0.94);
+        MinHeight=Math.Min(MinHeight,work.Height*0.94);
+        Width=Math.Max(MinWidth,Math.Min(Width,work.Width*0.94));
+        Height=Math.Max(MinHeight,Math.Min(Height,work.Height*0.92));
+        Left=work.Left+(work.Width-Width)/2;
+        Top=work.Top+(work.Height-Height)/2;
     }
     private async Task Refresh()
     {

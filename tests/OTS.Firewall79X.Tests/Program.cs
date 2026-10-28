@@ -95,5 +95,23 @@ Test("Per-process audited bulk reads require 64 distinct file paths in one minut
     Assert(m.Observe("File",@"C:\Data\item-20.txt",@"C:\Tools\copy.exe","0x1",now.AddSeconds(20)).DistinctFiles==80);
     Assert(m.Observe("File",@"C:\Data\other.txt",@"C:\Tools\copy.exe","0x1",now.AddMinutes(2)).DistinctFiles==1);
 });
+Test("DNS-rebinding observation warns only after validated public to private transition",()=>{
+    var now=DateTimeOffset.UtcNow;
+    var d=new DnsRebindingDetector();
+    Assert(DnsRebindingDetector.IsLocal(System.Net.IPAddress.Parse("192.168.1.12")));
+    Assert(!DnsRebindingDetector.IsLocal(System.Net.IPAddress.Parse("1.1.1.1")));
+    var first=d.Observe("example.com","::ffff:8.8.8.8;","0",now);
+    Assert(first.ParsedAddressAnswer&&!first.SuspiciousTransition);
+    Assert(!d.Observe("unrelated.example.com","10.1.2.3;","0",now.AddSeconds(2)).SuspiciousTransition);
+    var second=d.Observe("example.com","192.168.2.20;","0",now.AddSeconds(3));
+    Assert(second.ParsedAddressAnswer&&second.SuspiciousTransition);
+    Assert(!d.Observe("example.com","192.168.2.21;","0",now.AddSeconds(4)).SuspiciousTransition);
+    Assert(!d.Observe("example.com","192.168.2.22;","9003",now.AddSeconds(5)).SuspiciousTransition);
+    Assert(!d.Observe("router.local","8.8.8.8;","0",now).ParsedAddressAnswer);
+    var stale=new DnsRebindingDetector();
+    stale.Observe("site.example.org","8.8.8.8;","0",now);
+    Assert(!stale.Observe("site.example.org","10.0.0.1;","0",now.AddMinutes(11)).SuspiciousTransition);
+    Assert(!new DnsRebindingDetector().Observe("example.com","some.cname.example;","0",now).ParsedAddressAnswer);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
