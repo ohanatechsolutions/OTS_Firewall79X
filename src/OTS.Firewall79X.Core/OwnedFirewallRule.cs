@@ -24,6 +24,26 @@ public static class OwnedFirewallRule
                           name.StartsWith(IntelligencePrefix, StringComparison.Ordinal) ||
                           name.StartsWith(AuthenticationPrefix, StringComparison.Ordinal));
 
+    public static bool IsExactHostSelector(string? selector, IPAddress expected)
+    {
+        if(string.IsNullOrWhiteSpace(selector) || selector.Length>100 ||
+           selector.Contains(',') || selector.Contains(';') || selector.Contains('-') ||
+           selector.Contains('*'))return false;
+        var host=selector;
+        int slash=selector.IndexOf('/');
+        if(slash>=0)
+        {
+            if(selector.IndexOf('/',slash+1)>=0)return false;
+            var mask=selector[(slash+1)..];
+            bool correct=expected.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork
+                ? mask is "32" or "255.255.255.255" : mask=="128";
+            if(!correct)return false;
+            host=selector[..slash];
+        }
+        return IPAddress.TryParse(host,out var parsed) &&
+            !parsed.IsIPv4MappedToIPv6 && parsed.Equals(expected);
+    }
+
     public static bool Matches(
         string? name, string? description, string? remoteAddresses,
         int direction, int action, int protocol, int profiles, bool enabled,
@@ -43,9 +63,10 @@ public static class OwnedFirewallRule
             !NetworkAbuseWindow.EligiblePublicSource(address) ||
             (outbound && ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork))
             return false;
-        // Match EXACT canonical address, never a broad CIDR, range or address list.
+        // Windows Firewall may normalize an exact host into a /32, all-ones mask or /128.
+        // Never accept a subnet/range/wildcard or multiple hosts as OTS-owned.
         if (!string.Equals(address, ip.ToString(), StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(remoteAddresses, address, StringComparison.OrdinalIgnoreCase))
+            !IsExactHostSelector(remoteAddresses, ip))
             return false;
         return authentication
             ? direction == 1 && description == AuthenticationDescription

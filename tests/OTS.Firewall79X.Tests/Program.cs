@@ -668,6 +668,24 @@ Test("IPv4/IPv6 packet parser fails closed on malformed headers, not truncated c
     fragmented[42]=0;fragmented[43]=2;
     Assert(IpPacketValidator.Inspect(fragmented).Status==IpPacketValidator.Verdict.Malformed);
 });
+Test("Section A exact Windows Firewall single-host selector equivalence",()=>{
+    var ip=System.Net.IPAddress.Parse("8.8.8.8");
+    foreach(var host in new[]{"8.8.8.8","8.8.8.8/32","8.8.8.8/255.255.255.255"})
+        Assert(OwnedFirewallRule.IsExactHostSelector(host,ip),host);
+    foreach(var host in new[]{"*","8.8.8.0/24","8.8.8.8/16","8.8.8.8/0",
+        "8.8.8.8,1.1.1.1","8.8.8.8-8.8.8.9","8.8.8.8;1.1.1.1","8.8.8.8/33"})
+        Assert(!OwnedFirewallRule.IsExactHostSelector(host,ip),host);
+    Assert(OwnedFirewallRule.IsExactHostSelector("2606:4700:4700::1111/128",
+        System.Net.IPAddress.Parse("2606:4700:4700::1111")));
+    Assert(!OwnedFirewallRule.IsExactHostSelector("2606:4700:4700::/64",
+        System.Net.IPAddress.Parse("2606:4700:4700::1111")));
+    Assert(OwnedFirewallRule.Matches(OwnedFirewallRule.InboundPrefix+"8.8.8.8",
+        OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.255",
+        1,0,256,int.MaxValue,true));
+    Assert(!OwnedFirewallRule.Matches(OwnedFirewallRule.InboundPrefix+"8.8.8.8",
+        OwnedFirewallRule.InboundDescription,"8.8.8.0/24",
+        1,0,256,int.MaxValue,true));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 
