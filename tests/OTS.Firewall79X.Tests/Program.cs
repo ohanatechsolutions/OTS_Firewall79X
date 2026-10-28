@@ -65,6 +65,20 @@ Test("Browser manifest avoids false malware verdict on ordinary permissions",()=
     Assert(!Detections.BrowserManifestHasHighImpactPermissions(wrongType.RootElement));
     Assert(!Detections.BrowserManifestHasHighImpactPermissions(array.RootElement));
 });
+Test("NuGet lockfile produces exact validated versions, deduplicated across target frameworks",()=>{
+    const string json="""{"version":1,"dependencies":{"net10.0":{"Example.Package":{"type":"Direct","resolved":"1.2.3"},"Other.Lib":{"type":"Transitive","resolved":"4.5.6-beta.2"}},"net10.0-windows":{"Example.Package":{"type":"Direct","resolved":"1.2.3"}}}}""";
+    var packages=NuGetLockParser.Parse(json);
+    Assert(packages.Count==2);
+    Assert(packages.Any(p=>p.Name=="Example.Package"&&p.Version=="1.2.3"));
+    Assert(packages.Any(p=>p.Name=="Other.Lib"&&p.Version=="4.5.6-beta.2"));
+});
+Test("NuGet lockfile refuses malformed, unversioned or invalid package identifiers",()=>{
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("{}"));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"Library":{"type":"Project"}}}}"""));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"bad/package":{"resolved":"1.2.3"}}}}"""));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"name":{"resolved":"../secret"}}}}"""));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse(new string('a',1024*1024+1)));
+});
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
