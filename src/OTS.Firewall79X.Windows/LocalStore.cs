@@ -143,7 +143,7 @@ public sealed class EventStore
                 new EventIntegrity.Record(previous,data,next,keyring.CurrentId),Wire.Json)+"\n");
             chain=next;VerifiedRetainedEvents++;
             }
-            catch(Exception ex)when(ex is IOException or UnauthorizedAccessException){LastError=Wire.Clean(ex.Message);}
+            catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or CryptographicException or InvalidDataException or InvalidOperationException){LastError=Wire.Clean(ex.Message);}
         }
     }
 }
