@@ -142,7 +142,12 @@ public sealed class LayerChecks
                 var drivers=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,State FROM Win32_SystemDriver","Name","PathName","State");Changed(id,"Kernel driver inventory",drivers);
                 return Good(id,$"{drivers.Count} system drivers inventoried",LayerMode.Monitoring,"Driver changes and enabled CodeIntegrity events; no memory rootkit scanner or kernel attestation.");
             case 27:return Channel(id,"Security","Monitors account creation, administrator-group membership, privilege-use, and audit-policy events.");
-            case 28:return Missing(id,"Camera/microphone privacy observation requires the interactive-user collector");
+            case 28:
+                var media=EndpointInventory.UserMediaConsent();
+                if(media.Keys==0)return Missing(id,"No readable loaded-user camera/microphone ConsentStore registry keys; background privacy telemetry is unavailable.");
+                Changed(id,"Camera/microphone consent activity",media.Values);
+                return Good(id,$"Observed {media.Keys} loaded-user camera/microphone ConsentStore keys and {media.Values.Count} activity entries",LayerMode.Monitoring,
+                    "Read-only per-user registry timestamps can be delayed or absent; does not capture every active application, device stream or blocked request. UI need not be open, but unmounted user profiles are unavailable.");
             case 29:
                 int high=0;var now=DateTimeOffset.UtcNow;var live=new HashSet<int>();
                 foreach(var p in Process.GetProcesses())using(p)
