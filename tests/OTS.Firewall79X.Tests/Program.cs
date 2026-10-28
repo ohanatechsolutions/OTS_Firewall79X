@@ -641,6 +641,168 @@ Test("Section G: malformed DNS, feed and retained-log corpus remains bounded",()
     Assert(!detector.Observe(new string('A',8192),"8.8.8.8","0",now).ParsedAddressAnswer);
     Assert(!detector.Observe("external.example",new string('A',8192),"0",now).ParsedAddressAnswer);
 });
+Test("Section C endpoint parser rejects malformed and parses scoped IPv6",()=>{
+    var ip4=TrafficRules.ParseEndpoint("[192.168.1.10]:587");
+    Assert(ip4?.Port==587&&ip4.Address.ToString()=="192.168.1.10");
+    Assert(TrafficRules.ParseEndpoint("[2001:db8::1]:443")?.Port==443);
+    foreach(var bad in new[]{"1.2.3.4:80","[1.1.1.1]:-1","[1.1.1.1]:99999","[nope]:80","[::1]:NaN",new string('x',101)})
+        Assert(TrafficRules.ParseEndpoint(bad)==null,bad);
+    Assert(TrafficRules.NonLoopbackBind("[0.0.0.0]:8080"));
+    Assert(!TrafficRules.NonLoopbackBind("[::1]:8080"));
+});
+Test("Section C SMTP correlation covers common explicit submission ports",()=>{
+    foreach(var p in new[]{25,465,587,2525})Assert(TrafficRules.SmtpPort(p));
+    Assert(!TrafficRules.SmtpPort(443));
+    Assert(TrafficRules.SuspiciousMailClient("powershell",587));
+    Assert(TrafficRules.SuspiciousMailClient("unknown",25));
+    Assert(!TrafficRules.SuspiciousMailClient("thunderbird.exe",587));
+    Assert(!TrafficRules.SuspiciousMailClient("outlook",465));
+});
+Test("Section C neighbor alerts need two matching observations",()=>{
+    var tracker=new NeighborChangeTracker();
+    var old=new Dictionary<string,string>{{"3:192.168.1.1","001122334455"}};
+    var newer=new Dictionary<string,string>{{"3:192.168.1.1","AABBCCDDEEFF"}};
+    var gateway=new HashSet<string>{"192.168.1.1"};
+    Assert(tracker.Update(old,gateway).Count==0);
+    Assert(tracker.Update(newer,gateway).Count==0);
+    Assert(tracker.Update(old,gateway).Count==0);
+    Assert(tracker.Update(newer,gateway).Count==0);
+    var confirmed=tracker.Update(newer,gateway);
+    Assert(confirmed.Count==1&&confirmed[0].Gateway);
+    Assert(tracker.Update(newer,gateway).Count==0);
+    Assert(!TrafficRules.IsMac("000000000000"));
+    Assert(TrafficRules.IsMac("00-11-22-33-44-55"));
+});
+Test("Section C monotonic clock checks ignore ordinary passage of time",()=>{
+    var t=DateTimeOffset.Parse("2026-10-27T10:00:00+00:00");
+    Assert(!TrafficRules.ClockStep(t,10000,t.AddSeconds(30),40000,TimeSpan.FromSeconds(90)));
+    Assert(TrafficRules.ClockStep(t,10000,t.AddMinutes(4),40000,TimeSpan.FromSeconds(90)));
+    Assert(!TrafficRules.ClockStep(t,40000,t.AddMinutes(4),10000,TimeSpan.FromSeconds(90)));
+    Assert(!TrafficRules.RemoteClockDrift(t,t.AddSeconds(30),TimeSpan.FromSeconds(1),TimeSpan.FromSeconds(120)));
+    Assert(TrafficRules.RemoteClockDrift(t,t.AddMinutes(3),TimeSpan.FromSeconds(1),TimeSpan.FromSeconds(120)));
+    Assert(!TrafficRules.RemoteClockDrift(t,t.AddMinutes(3),TimeSpan.FromSeconds(30),TimeSpan.FromSeconds(120)));
+});
+Test("Section C MITRE mapping is limited to justified signals",()=>{
+    Assert(TrafficRules.MitreTechnique("repeated-logon-failures")!.Contains("T1110"));
+    Assert(TrafficRules.MitreTechnique("remote-rdp-logon")!.Contains("T1021.001"));
+    Assert(TrafficRules.MitreTechnique("script-powershell")!.Contains("T1059.001"));
+    Assert(TrafficRules.MitreTechnique("arbitrary-network-traffic")==null);
+});
+Test("Section H forensic snapshot roundtrip, corruption rejection and unique versions",()=>{
+    var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
+    var dashboard=new Dashboard(true,"Partially Protected",12,30,DateTimeOffset.UtcNow,null,
+        Catalog.All.Select(c=>new LayerResult(c.Id,LayerMode.Unavailable,false,"Not assessed")).ToList(),[],[],2,0,0,null,"unavailable");
+    var first=ForensicSnapshots.Capture(root,dashboard,2);
+    var second=ForensicSnapshots.Capture(root,dashboard,2);
+    Assert(first!=second&&ForensicSnapshots.Verify(first).Data.Layers.Count==79);
+    var json=File.ReadAllText(first).Replace("Partially Protected","Fully Protected");
+    File.WriteAllText(first,json);
+    Throws<InvalidDataException>(()=>ForensicSnapshots.Verify(first));
+    var third=ForensicSnapshots.Capture(root,dashboard,2);
+    Assert(File.Exists(first),"Damaged evidence must be preserved");
+    Assert(File.Exists(third)&&File.Exists(second));
+});
+Test("Section H dossier contains 79 operational states and missing-data guidance",()=>{
+    var rows=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"No evidence","Test limitation")).ToList();
+    var d=new Dashboard(true,"Partially Protected",0,0,DateTimeOffset.UtcNow,null,rows,[],[],0,0,0,null,"");
+    var doc=SecurityDossier.Generate(d);
+    Assert(doc.Contains("| 79 |")&&doc.Contains("Layer 57")&&doc.Contains("unavailable",StringComparison.OrdinalIgnoreCase));
+    Assert(PostureAdvice.Recommend(rows).Count>0);
+});
+Test("Section H quarter history survives restart and catches up without fabricated days",()=>{
+    var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
+    var history=Path.Combine(root,"history.json");var reports=Path.Combine(root,"reports");
+    var t=new DateTimeOffset(2025,12,31,12,0,0,TimeSpan.Zero);
+    var d=new Dashboard(true,"Partially Protected",38,52,t,null,[],[],[],12,0,0,null,"");
+    QuarterlyHistory.Observe(history,d);QuarterlyHistory.Observe(history,d with{Score=45});
+    Assert(QuarterlyHistory.Load(history).Count==1,"Only one daily sample should survive");
+    Assert(QuarterlyHistory.CreateDue(history,reports,t).Count==0);
+    var created=QuarterlyHistory.CreateDue(history,reports,t.AddDays(1));
+    Assert(created.Count==1&&File.ReadAllText(created[0]).Contains("45"));
+    Assert(QuarterlyHistory.CreateDue(history,reports,t.AddDays(2)).Count==0,"Report must be idempotent");
+    File.WriteAllText(history,"{bad json");
+    Throws<System.Text.Json.JsonException>(()=>QuarterlyHistory.Load(history));
+});
+Test("Section H range audit recognizes IPv4, IPv6 and port overlaps but not unknown keywords",()=>{
+    Assert(FirewallOverlap.PortsOverlap("80-100","90,443"));
+    Assert(!FirewallOverlap.PortsOverlap("80-90","443"));
+    Assert(!FirewallOverlap.PortsOverlap("RPC Dynamic Ports","443"));
+    Assert(FirewallOverlap.AddressesOverlap("192.168.1.0/24","192.168.1.2"));
+    Assert(!FirewallOverlap.AddressesOverlap("192.168.1.0/24","10.0.0.1/32"));
+    Assert(FirewallOverlap.AddressesOverlap("2001:db8::/32","2001:db8::2"));
+    Assert(!FirewallOverlap.AddressesOverlap("LocalSubnet","192.168.1.2"));
+    var baseRule=new FirewallRuleView("allow","1","1","6","80-90","192.168.1.0/24","7","",true);
+    var match=baseRule with{Name="block",Action="0",LocalPorts="85",RemoteAddresses="192.168.1.11"};
+    var report=FirewallOverlap.Analyze(new[]{baseRule,match});
+    Assert(report.PotentialOverlaps>0&&report.Examined==2);
+    Assert(FirewallOverlap.Analyze(new[]{baseRule,match with{Profiles="0"}}).PotentialOverlaps==0);
+});
+Test("Section H encrypted export queue verifies data and preserves retry on failures",()=>{
+    var root=Path.GetDirectoryName(Temp())!;var queue=Path.Combine(root,"queue");var receiver=Path.Combine(root,"receiver");
+    Directory.CreateDirectory(root);Directory.CreateDirectory(receiver);
+    var source=Path.Combine(root,"source.jsonl");File.WriteAllText(source,"security log data");
+    var archive=OffDeviceLogExport.Enqueue(queue,source,"twelve-chars-or-more");
+    Assert(!OffDeviceLogExport.IsOffDeviceDestination(receiver),"Local hard disk must not count as off-device");
+    Throws<IOException>(()=>OffDeviceLogExport.Ship(archive,receiver));
+    var copy=OffDeviceLogExport.CopyAndVerify(archive,receiver);
+    Assert(File.Exists(archive)&&File.Exists(copy),"Do not delete queued evidence before successful remote receipt");
+    Assert(SecureArchive.Decrypt(copy,"twelve-chars-or-more").AsSpan().SequenceEqual(System.Text.Encoding.UTF8.GetBytes("security log data")));
+    Assert(OffDeviceLogExport.CopyAndVerify(archive,receiver)==copy,
+        "Byte-identical delivery receipt should be safe to retry after interrupted queue deletion");
+    var data=File.ReadAllBytes(copy);data[^1]^=1;File.WriteAllBytes(copy,data);
+    Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(archive,receiver));
+    Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(copy,"twelve-chars-or-more"));
+});
+Test("Section H restored encrypted backup retains last-modified timestamp",()=>{
+    var root=Path.GetDirectoryName(Temp())!;var source=Path.Combine(root,"src");Directory.CreateDirectory(source);
+    var file=Path.Combine(source,"time.txt");File.WriteAllText(file,"important");
+    var timestamp=new DateTime(2022,2,3,4,5,6,DateTimeKind.Utc);File.SetLastWriteTimeUtc(file,timestamp);
+    var encrypted=Path.Combine(root,"time.otsfolder");
+    FolderBackup.Create(source,encrypted,"twelve-chars-or-more");
+    var restored=Path.Combine(root,"restored");FolderBackup.Restore(encrypted,restored,"twelve-chars-or-more");
+    Assert(Math.Abs((File.GetLastWriteTimeUtc(Path.Combine(restored,"time.txt"))-timestamp).TotalSeconds)<2);
+});
+
+Test("Section H generated offline kit preserves verified owned configuration exports",()=>{
+    var baseDir=Path.GetDirectoryName(Temp())!;var install=Path.Combine(baseDir,"install");var data=Path.Combine(baseDir,"data");var kit=Path.Combine(baseDir,"kit");
+    Directory.CreateDirectory(install);Directory.CreateDirectory(data);
+    File.WriteAllText(Path.Combine(data,"changes.json"),"[]");
+    File.WriteAllText(Path.Combine(install,"OTS.Firewall79X.Recovery.exe"),"fixture");
+    var result=RecoveryKit.Create(kit,install,data);
+    Assert(result.IncludesRecoveryExecutable && result.ConfigurationFiles==1);
+    Assert(File.ReadAllText(result.ManifestPath).Contains(Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("[]")))));
+    Assert(File.ReadAllText(Path.Combine(kit,"RECOVERY_INSTRUCTIONS.md")).Contains("NOT a bootable"));
+    Assert(File.ReadAllText(Path.Combine(kit,"RESTORE_OWNED_SETTINGS.ps1")).Contains("--restore"));
+});
+Test("Section H configured-only resilience actions remain administrator-only",()=>{
+    foreach(var command in new[]{"configure-backup","configure-export","disable-backup","disable-export"})
+    {
+        Assert(Wire.Commands.Contains(command));
+        Assert(Wire.RequiresAdmin(command));
+    }
+    var request=new Request("configure-export",Destination:@"Z:\\OTS-logs",Secret:"NeverLogThisPassword");
+    using var stream=new MemoryStream();
+    Wire.WriteAsync(stream,request,default).GetAwaiter().GetResult();
+    stream.Position=0;
+    var parsed=Wire.ReadAsync<Request>(stream,1024,default).GetAwaiter().GetResult();
+    Assert(parsed.Command==request.Command&&parsed.Secret==request.Secret&&parsed.Destination==request.Destination);
+});
+Test("Section H strict IPC denies secret injection into ordinary commands",()=>{
+    Assert(!Wire.ValidRequest(new Request("status",Secret:"NeverLogThisPassword")));
+    Assert(!Wire.ValidRequest(new Request("configure-export",Destination:"X")));
+    Assert(Wire.ValidRequest(new Request("configure-export",Destination:"X",Secret:"NeverLogThisPassword")));
+    foreach(var json in new[]{
+        """{"Command":"status","Secret":"unauthorized"}""",
+        """{"Command":"configure-export","Destination":"X"}""",
+        """{"Command":"configure-export","Destination":"X","Secret":"twelve chars okay","secret":"duplicated"}"""})
+    {
+        using var frame=new MemoryStream();
+        var bytes=System.Text.Encoding.UTF8.GetBytes(json);
+        frame.Write(BitConverter.GetBytes(bytes.Length));frame.Write(bytes);frame.Position=0;
+        Throws<InvalidDataException>(()=>Wire.ReadAsync<Request>(frame,8192,default).GetAwaiter().GetResult());
+    }
+});
 Test("WFP 5157 endpoint roles use remote DestAddress and local SourcePort",()=>{
     Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","6",out var evt));
     Assert(evt!=null&&evt.RemoteAddress=="8.8.8.8"&&evt.LocalPort==445&&evt.RemotePort==50420);

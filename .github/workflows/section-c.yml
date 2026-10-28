@@ -1,0 +1,41 @@
+name: Section C network visibility verification
+on:
+  push:
+    branches:
+      - feat/section-c-network-visibility-14-24
+  pull_request:
+    paths:
+      - 'src/OTS.Firewall79X.Core/**'
+      - 'src/OTS.Firewall79X.Windows/**'
+      - 'tests/**'
+      - '.github/workflows/section-c.yml'
+permissions:
+  contents: read
+concurrency:
+  group: section-c-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  section-c-windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '10.0.403'
+      - name: Build, execute core tests and compile installable executable
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Windows integration, upgrade, rollback and uninstall
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1
+      - name: Upload Section C validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: section-c-windows-validation
+          path: |
+            artifacts/*test-results.json
+            artifacts/windows-observed-status.json
+            artifacts/*.log
+          if-no-files-found: warn

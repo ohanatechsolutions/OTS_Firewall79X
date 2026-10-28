@@ -75,10 +75,7 @@ public sealed class FirewallAudit
     }
     public static string Analyze(IEnumerable<Rule> rules)
     {
-        var enabled=rules.Where(r=>r.Enabled).ToArray();
-        int duplicate=enabled.GroupBy(r=>new{r.Direction,r.Action,r.Protocol,r.LocalPorts,r.RemoteAddresses,r.Profiles,r.Application}).Sum(g=>Math.Max(0,g.Count()-1));
-        int conflict=enabled.GroupBy(r=>new{r.Direction,r.Protocol,r.LocalPorts,r.RemoteAddresses,r.Profiles,r.Application}).Count(g=>g.Select(r=>r.Action).Distinct().Count()>1);
-        int broad=enabled.Count(r=>r.Direction=="1"&&r.Action=="1"&&r.RemoteAddresses=="*"&&string.IsNullOrEmpty(r.Application)&&r.LocalPorts is "*" or "");
-        return $"{enabled.Length} enabled rules; {duplicate} exact duplicate matches; {conflict} opposing-action matches; {broad} broad inbound allows. Partial overlaps and policy precedence require manual review.";
+        return FirewallOverlap.Analyze(rules.Select(r => new FirewallRuleView(r.Name, r.Direction, r.Action,
+            r.Protocol, r.LocalPorts, r.RemoteAddresses, r.Profiles, r.Application, r.Enabled))).ToString();
     }
 }

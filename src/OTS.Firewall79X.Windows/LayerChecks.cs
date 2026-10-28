@@ -4,10 +4,20 @@ using Microsoft.Win32;
 using OTS.Firewall79X.Core;
 namespace OTS.Firewall79X.Windows;
 
-public sealed class LayerChecks
+public sealed class LayerChecks : IDisposable
 {
     private readonly EventStore events;private readonly Dictionary<string,string> baselines=[];
-    private Dictionary<string,string> neighbors=[];private HashSet<string> previousConnections=[];
+    private readonly NeighborChangeTracker neighborChanges=new();
+    private NeighborInventory.Snapshot? neighborSnapshot;
+    private Dictionary<string,string> neighbors=[];
+    private HashSet<string> previousConnections=[];
+    private HashSet<string>? previousListeners;
+    private Dictionary<string,WirelessAudit.Network> previousWifi=new(StringComparer.OrdinalIgnoreCase);
+    private bool? previousRdpEnabled;
+    private readonly ClockDriftProbe clock=new();
+    private DateTimeOffset lastClockAlert=DateTimeOffset.MinValue;
+    private DefenderNetworkIds.Status? defenderNetwork;
+
     private readonly Dictionary<string,List<DateTimeOffset>> connectionsHistory=[];
     private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start,int Streak)> processSamples=[];
     public EventSensors? Sensors {get;set;}
@@ -30,7 +40,7 @@ public sealed class LayerChecks
     public LayerChecks(EventStore events){this.events=events;}
     public void Prepare()
     {
-        firewall=null;NetworkError=null;UdpError=null;deviceSnapshot=null;
+        firewall=null;NetworkError=null;UdpError=null;deviceSnapshot=null;neighborSnapshot=null;defenderNetwork=null;
         try{Connections=NetworkTables.Connections();TrackNetwork();TrackIntel();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
         try{Connections.AddRange(NetworkTables.UdpSockets());}catch(Exception ex){UdpError=ex.Message;}
         try{firewall=Firewall!.Read();}catch(Exception ex){events.Add(1,"Warning","Firewall query failed",ex.Message);}
@@ -45,7 +55,10 @@ public sealed class LayerChecks
             if(!connectionsHistory.TryGetValue(key,out var history))connectionsHistory[key]=history=[];
             history.Add(now);history.RemoveAll(t=>t<now.AddHours(-12));if(history.Count>32)history.RemoveAt(0);
             if(BeaconAnalysis.Suspicious(c.Process,history))events.Add(79,"Warning","Possible regular outbound beacon",$"{key}; {history.Count} observed reconnections; timing is suggestive, not a malicious verdict");
-            if(c.Remote.EndsWith(":25")&&!new[]{"outlook","thunderbird"}.Contains(c.Process.ToLowerInvariant()))events.Add(22,"Warning","Unusual SMTP connection",$"{c.Process} connected to TCP 25");
+            var remote=TrafficRules.ParseEndpoint(c.Remote);
+            if(remote!=null&&TrafficRules.SuspiciousMailClient(c.Process,remote.Port))
+                events.Add(22,"Warning","Unusual outbound SMTP connection",
+                    $"{Wire.Clean(c.Process,80)} (PID {c.Pid}) connected to TCP {remote.Port}; SMTP payload and intent were not inspected.");
         }
         previousConnections=current;
     }
@@ -168,35 +181,132 @@ public sealed class LayerChecks
                 return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence+"; "+paired.Evidence,LayerMode.Monitoring,
                     "Paired/connected flags are Windows cached Classic device reports, not active BLE monitoring or proof of authorization.");
             case 11:case 12:case 13:return Missing(id,"Deception monitor has not reported health");
-            case 14:return Missing(id,"An established packet intrusion-detection engine and validated network signature set are not yet integrated.");
-            case 15:return Channel(id,"Security","Classifies supported Windows authentication, privilege, and blocked-connection events; broad ATT&CK correlation is incomplete.");
-            case 16:return NetworkError==null?Good(id,$"{Connections.Count} TCP endpoints with owning process IDs",LayerMode.Monitoring,"IPv4/IPv6 polling can miss short-lived connections; UDP attribution is absent. DNS observations require the DNS Client Operational channel."):Missing(id,NetworkError);
+            case 14:
+                defenderNetwork??=DefenderNetworkIds.Read();
+                if(Sensors?.Has("Microsoft-Windows-Windows Defender/Operational")!=true)
+                    return Missing(id,"Defender Operational subscription unavailable; native network threats cannot be verified.");
+                if(!defenderNetwork.Available||!defenderNetwork.ProtectionEnabled&&!defenderNetwork.AuditOnly)
+                    return Missing(id,defenderNetwork.Evidence+"; no independently integrated packet IDS.");
+                return Good(id,defenderNetwork.Evidence+
+                    $"; {Sensors.NetworkProtectionDetections} actual native network threat/audit events processed",
+                    LayerMode.Monitoring,defenderNetwork.Limitation+
+                    " Detection event counts may remain zero on quiet systems; controlled attack-signature testing and dedicated IDS rule updates remain outstanding.");
+            case 15:
+                return Channel(id,"Security","Windows blocked connections and login events are correlated; specific supported signals carry cautious MITRE ATT&CK technique hypotheses (T1110, T1021.001, T1059.001). Unverified network events are not assigned techniques.");
+            case 16:
+                if(NetworkError!=null&&UdpError!=null)return Missing(id,"TCP and UDP table collection unavailable: "+NetworkError+"; "+UdpError);
+                return Good(id,$"{Connections.Count(c=>c.State!="UDP Bound")} TCP endpoints and {Connections.Count(c=>c.State=="UDP Bound")} UDP bindings with owning process IDs; DNS Client responses observed={Sensors?.ObservedDnsResponses??0}",
+                    LayerMode.Monitoring,"TCP/UDP snapshots are not packet capture; UDP remote peer and query-to-process association are unavailable in native socket tables. Short-lived traffic, DoH and alternate resolvers may not be observed."+
+                    (UdpError==null?"":" UDP collector unavailable: "+UdpError));
             case 17:case 20:
-                var current=NetworkTables.Neighbors();
-                if(id==17){foreach(var pair in current)if(neighbors.TryGetValue(pair.Key,out var old)&&old!=pair.Value)events.Add(17,"Warning","Neighbor MAC changed",$"{pair.Key}: {old} -> {pair.Value}; roaming and gateway replacement can be legitimate");}
-                else{if(neighbors.Count>0)foreach(var pair in current.Where(p=>!neighbors.ContainsKey(p.Key)))events.Add(20,"Info","New neighbor observed",$"{pair.Key} {pair.Value}");neighbors=current;}
-                return Good(id,$"{current.Count} IPv4 ARP neighbors observed",LayerMode.Monitoring,"Passive ARP cache only; no complete LAN inventory, IPv6 NDP monitoring, or proof of spoofing.");
+                neighborSnapshot??=NeighborInventory.Read();
+                var current=neighborSnapshot.Entries;
+                if(id==17)
+                {
+                    foreach(var change in neighborChanges.Update(current,NeighborInventory.Gateways()))
+                        events.Add(17,change.Gateway?"High":"Warning",
+                            change.Gateway?"Possible gateway neighbor impersonation":"Neighbor link-layer address changed",
+                            $"{Wire.Clean(change.Key,100)}: {Wire.Clean(change.OldMac,24)} -> {Wire.Clean(change.NewMac,24)} confirmed twice; network roaming, DHCP renewal, proxy ARP/NDP and infrastructure failover are legitimate alternatives.");
+                }
+                else
+                {
+                    if(neighbors.Count>0)
+                        foreach(var pair in current.Where(p=>!neighbors.ContainsKey(p.Key)).Take(40))
+                            events.Add(20,"Info","New passive LAN neighbor observed",
+                                $"{Wire.Clean(pair.Key,100)} {Wire.Clean(pair.Value,24)}; not proof that a new physical device joined.");
+                    neighbors=current.ToDictionary(x=>x.Key,x=>x.Value,StringComparer.OrdinalIgnoreCase);
+                }
+                return Good(id,$"{current.Count} observed IP neighbors ({neighborSnapshot.IPv6Count} IPv6) via {neighborSnapshot.Source}",
+                    LayerMode.Monitoring,"Passive neighbor cache only; cannot distinguish every spoof from legitimate changes or discover silent hosts. MAC changes require two consecutive confirmations; IPv6 visibility depends on provider availability.");
             case 18:
-                var dhcp=SystemQueries.Wmi("root\\cimv2","SELECT DHCPServer,DefaultIPGateway,Description FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=True","DHCPServer","DefaultIPGateway","Description");Changed(id,"DHCP and gateway configuration",dhcp);
-                return Good(id,$"Monitoring DHCP/gateway configuration for {dhcp.Count} adapters",LayerMode.Monitoring,"Detects configuration changes, not unaccepted rogue DHCP offers or Wi-Fi evil twins.");
+                var dhcp=SystemQueries.Wmi("root\\cimv2",
+                    "SELECT DHCPServer,DefaultIPGateway,Description FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=True",
+                    "DHCPServer","DefaultIPGateway","Description");
+                Changed(id,"DHCP and gateway configuration",dhcp);
+                return Good(id,$"Baseline of DHCP server and gateway assignment on {dhcp.Count} Windows adapters",
+                    LayerMode.Monitoring,"Configuration changes are observable, but rogue DHCP offers not accepted by this host cannot be observed without packet capture; DHCP changes can be legitimate.");
             case 19:
-                if(NetworkError!=null)return Missing(id,NetworkError);var listeners=Connections.Where(c=>c.State=="Listening").Select(c=>$"{c.Process}:{c.Local}").Order().ToArray();Changed(19,"Listening TCP services",listeners);
-                return Good(id,$"{listeners.Length} local TCP listeners",LayerMode.Monitoring,"Local observation only; public reachability, NAT, router policy, and UDP exposure are not externally verified.");
-            case 49:
-                if(NetworkError!=null)return Missing(id,"Local listener inventory unavailable; external verification has not been performed: "+NetworkError);
-                var bound=Connections.Where(c=>c.State=="Listening").Select(c=>c.Local).ToArray();
-                return new(id,LayerMode.Auditing,false,SectionFAudits.Exposure(bound),
-                    "OPTIONAL EXTERNAL VERIFICATION UNAVAILABLE: no user-authorized remote probe or authenticated third-party exposure assessment is configured. Local binding is not Internet reachability.");
+                if(NetworkError!=null)return Missing(id,NetworkError);
+                var listeners=Connections.Where(c=>c.State=="Listening")
+                    .Select(c=>$"TCP {c.Process} {c.Local}")
+                    .Concat(Connections.Where(c=>c.State=="UDP Bound").Select(c=>$"UDP {c.Process} {c.Local}"))
+                    .Order(StringComparer.OrdinalIgnoreCase).Take(12000).ToArray();
+                if(id==19)
+                {
+                    var currentListeners=listeners.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    if(previousListeners!=null)
+                        foreach(var newlyOpen in currentListeners.Except(previousListeners).Take(32))
+                        {
+                            int pos=newlyOpen.LastIndexOf('[');
+                            var parsed=pos>=0?TrafficRules.ParseEndpoint(newlyOpen[pos..]):null;
+                            if(parsed!=null&&TrafficRules.NonLoopbackBind(newlyOpen[pos..])&&parsed.Port is >0 and <49152)
+                                events.Add(19,"Warning","New network-facing local socket",
+                                    Wire.Clean(newlyOpen,180)+"; binding does not prove router/public reachability.");
+                        }
+                    previousListeners=currentListeners;
+                    Changed(19,"Listening TCP and bound UDP services",listeners);
+                }
+                return Good(id,$"{Connections.Count(c=>c.State=="Listening")} listening TCP sockets; {Connections.Count(c=>c.State=="UDP Bound")} bound UDP sockets (including ephemeral)",
+                    LayerMode.Monitoring,"Read-only local socket inventory; wildcard bindings may still be firewalled and UDP bindings are not established connections. Router, NAT, upstream policy and external reachability are not checked."+
+                    (UdpError==null?"":" UDP inventory unavailable: "+UdpError));
             case 21:
-                var wifi=WirelessAudit.Read();if(wifi.Count==0)return Na(id,"No connected WLAN interface reported");
-                foreach(var w in wifi){Changed(18,"Connected Wi-Fi BSSID/authentication: "+w.Ssid,new{w.Bssid,w.Authentication,w.Cipher});if(w.Weak)events.Add(21,"High","Weak Wi-Fi security",$"{w.Ssid}: authentication {w.Authentication}, cipher {w.Cipher}");}
+                var wifi=WirelessAudit.Read();
+                if(wifi.Count==0)return Na(id,"No connected WLAN interface reported by native Windows WLAN APIs");
+                foreach(var w in wifi)
+                {
+                    Changed(18,"Connected Wi-Fi BSSID/authentication: "+w.Ssid,new{w.Bssid,w.Authentication,w.Cipher});
+                    if(previousWifi.TryGetValue(w.Interface,out var old)&&old.Ssid==w.Ssid)
+                    {
+                        if(old.Bssid!=w.Bssid)
+                            events.Add(18,"Info","Wi-Fi access point changed",
+                                $"{Wire.Clean(w.Ssid,70)} BSSID changed; normal roaming is possible. BSSID change alone is not an evil-twin verdict.");
+                        if(!old.Weak&&w.Weak)
+                            events.Add(18,"High","Wi-Fi authentication/cipher downgrade",
+                                $"{Wire.Clean(w.Ssid,70)} transitioned to weak network security; verify access point identity.");
+                    }
+                    if(w.Weak)events.Add(21,"High","Weak Wi-Fi security",
+                        $"{Wire.Clean(w.Ssid,70)}: auth={w.Authentication}, cipher={w.Cipher}");
+                    previousWifi[w.Interface]=w;
+                }
+                foreach(var key in previousWifi.Keys.Except(wifi.Select(w=>w.Interface)).ToArray())previousWifi.Remove(key);
                 var evidence=string.Join("; ",wifi.Select(w=>$"{w.Ssid}: security={w.SecurityEnabled}, auth={w.Authentication}, cipher={w.Cipher}, signal={w.Signal}%"));
-                return wifi.Any(w=>w.Weak)?Bad(id,evidence,"Cipher/authentication state is not proof that a network is trustworthy; no evil-twin attestation."):Good(id,evidence,LayerMode.Auditing,"Native WLAN connection attributes only; hardware/privacy-policy dependent. A secured SSID can still be hostile.");
-            case 22:return NetworkError==null?Good(id,"Observes new TCP port 25 connections",LayerMode.Monitoring,"Heuristic application-name exceptions; no SMTP content inspection; short-lived connections can be missed."):Missing(id,NetworkError);
+                return wifi.Any(w=>w.Weak)?Bad(id,evidence,
+                    "Only native connected WLAN settings are assessed; WPA3 transition/enterprise policy details and evil-twin impersonation are not cryptographically verified.")
+                    :Good(id,evidence,LayerMode.Auditing,
+                    "Native WLAN connection attributes only. SSID/BSSID changes and security downgrades are monitored; encrypted Wi-Fi is not proof that the access point is trustworthy.");
+            case 22:
+                return NetworkError==null?Good(id,
+                    "Monitors observed new TCP SMTP connections on ports 25, 465, 587 and 2525 with PID/process attribution",
+                    LayerMode.Monitoring,"Allowlisted mail clients can be abused and nonstandard mail ports/short connections can be missed. No email content inspection or malware verdict.")
+                    :Missing(id,NetworkError);
             case 23:
-                var remote=SystemQueries.Wmi("root\\cimv2","SELECT Name,State FROM Win32_Service WHERE Name='TermService' OR Name='sshd' OR Name LIKE '%VNC%' OR Name LIKE '%AnyDesk%' OR Name LIKE '%TeamViewer%'","Name","State");Changed(id,"Remote-management services",remote);
-                return Good(id,$"{remote.Count} recognized remote-management services",LayerMode.Monitoring,"Recognition list is not exhaustive.");
-            case 24:return Channel(id,"Security","Monitors Windows time-change security events; independent network clock-drift measurement is not implemented.");
+                var remote=SystemQueries.Wmi("root\\cimv2",
+                    "SELECT Name,State,StartMode,PathName FROM Win32_Service WHERE Name='TermService' OR Name='sshd' OR Name='WinRM' OR Name='RemoteRegistry' OR Name LIKE '%VNC%' OR Name LIKE '%AnyDesk%' OR Name LIKE '%TeamViewer%' OR Name LIKE '%ScreenConnect%' OR Name LIKE '%RustDesk%'",
+                    "Name","State","StartMode","PathName");
+                Changed(id,"Remote-management service state/startup/path",remote);
+                bool rdpEnabled=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Terminal Server","fDenyTSConnections") is int rdpPolicyValue&&rdpPolicyValue==0;
+                if(previousRdpEnabled==false&&rdpEnabled)
+                    events.Add(23,"High","Remote Desktop newly enabled","RDP policy now permits incoming connections. Firewall and external accessibility remain separate.");
+                previousRdpEnabled=rdpEnabled;
+                Changed(id,"RDP authorization policy",rdpEnabled);
+                var management=Connections.Where(c=>c.State=="Listening")
+                    .Where(c=>TrafficRules.ParseEndpoint(c.Local)?.Port is 3389 or 5985 or 5986 or 5900).ToArray();
+                return Good(id,$"{remote.Count} recognized management services; RDP enabled={rdpEnabled}; {management.Length} common remote-management TCP listeners",
+                    LayerMode.Monitoring,"Service names/ports are heuristics; portable tools, custom ports, management tunnels and remote support in other user sessions may be missed.");
+            case 24:
+                var time=clock.Sample();
+                if((time.ClockStep||time.RemoteDrift)&&DateTimeOffset.UtcNow-lastClockAlert>TimeSpan.FromMinutes(5))
+                {
+                    lastClockAlert=DateTimeOffset.UtcNow;
+                    events.Add(24,"High","Suspicious system clock change",
+                        (time.ClockStep?"Monotonic time comparison detected an abrupt clock step. ":"")+
+                        (time.RemoteDrift?"Clock differs by over 120 seconds from an HTTPS server. ":"")+
+                        Wire.Clean(time.Evidence,200));
+                }
+                return Good(id,time.Evidence+(time.ClockStep?"; local clock step detected":""),
+                    LayerMode.Monitoring,
+                    "Monotonic step detection plus periodic read-only HTTPS Date check. The server Date header is not signed secure time or NTP; outbound access, proxies, jitter and clock-dependent TLS validation can limit confidence."+
+                    (time.HasRemoteSample?"":" No independent remote time sample available."));
             case 25:
                 var services=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,StartMode FROM Win32_Service","Name","PathName","StartMode");
                 var tasks=EndpointInventory.ScheduledTasks();var startup=EndpointInventory.UserStartup();
@@ -398,7 +508,7 @@ public sealed class LayerChecks
                 if(!pending.Verified)return Missing(id,$"{fixes.Count} historical hotfix records; "+updateState);
                 return new(id,LayerMode.Auditing,false,$"{fixes.Count} historical installed hotfixes; "+updateState,
                     "Pending count is a completed native Windows Update Agent search, not proof the system is secure. Missing updates may include non-security items. Third-party package CVE matching has no verified vendor/version-to-advisory correlation configured.");
-            case 73:return firewall!=null?Good(id,FirewallAudit.Analyze(firewall.Value.Rules),LayerMode.Auditing,"Exact-match analysis only; full WFP/IPsec/GPO precedence and range shadowing are not modeled."):Missing(id,"Firewall rule enumeration unavailable");
+            case 73:return firewall!=null?Good(id,FirewallAudit.Analyze(firewall.Value.Rules),LayerMode.Auditing,"Bounded potential CIDR/port overlap audit; not effective-rule or WFP/GPO/IPsec precedence verification."):Missing(id,"Firewall rule enumeration unavailable");
             case 75:
                 if(DomainFeed?.Active is not { } domains)return Missing(id,DomainFeed?.Status??"No validated domain intelligence available");
                 return DomainBlocks?.Applied==true
@@ -411,4 +521,5 @@ public sealed class LayerChecks
             default:return Missing(id,"Runtime component has not supplied health evidence");
         }
     }
+    public void Dispose()=>clock.Dispose();
 }

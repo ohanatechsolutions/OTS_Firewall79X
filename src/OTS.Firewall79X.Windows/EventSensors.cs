@@ -19,6 +19,8 @@ public sealed class EventSensors : IDisposable
     public int ObservedRemoteLogonFailures=>Volatile.Read(ref remoteFailedLoginEvents);
     public int ObservedLoginSecurityEvents=>Volatile.Read(ref loginSecurityEvents);
     private int parsedDnsResponses;
+    private int networkProtectionDetections;
+    public int NetworkProtectionDetections=>Volatile.Read(ref networkProtectionDetections);
     public int ObservedDnsResponses=>Volatile.Read(ref parsedDnsResponses);
     private int fileReadEvents, browserFileEvents, keyloggerAlerts;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int,DateTimeOffset> recentBulk=new();
@@ -44,7 +46,7 @@ public sealed class EventSensors : IDisposable
         Watch("System","*[System[(EventID=7045 or EventID=7040 or EventID=7036 or EventID=219)]]");
         Watch("Microsoft-Windows-TaskScheduler/Operational","*[System[(EventID=106 or EventID=140 or EventID=141)]]");
         Watch("Microsoft-Windows-WMI-Activity/Operational","*[System[(EventID=5857 or EventID=5858 or EventID=5860 or EventID=5861)]]");
-        Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
+        Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007 or EventID=1125 or EventID=1126)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
         Watch("Microsoft-Windows-PowerShell/Operational","*[System[(EventID=4104)]]");
         Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3006 or EventID=3008)]]");
@@ -88,6 +90,8 @@ public sealed class EventSensors : IDisposable
                         events.Add(45,type=="10"?"Warning":"Info",kind+" logon",
                             $"Account={account}; remote={Wire.Clean(Get("IpAddress"),64)}; Windows Security event 4624.");
                         Interlocked.Increment(ref loginSecurityEvents);
+                        if(type=="10")events.Add(15,"Info","Remote-interactive access technique hypothesis",
+                            TrafficRules.MitreTechnique("remote-rdp-logon")!+"; classify only a verified Windows 4624 logon type 10.");
                     }
                     break;
                 }
@@ -104,10 +108,14 @@ public sealed class EventSensors : IDisposable
                         {
                             Interlocked.Increment(ref remoteFailedLoginEvents);
                             if(failure.Alert)
+                            {
                                 events.Add(41,"High","Repeated remote authentication failures",
                                     $"{failure.Count} observed network/remote-interactive failures from {failure.Source} within two minutes; an alert is not proof of an attack.");
                             if(failure.RestrictionCandidate)
                                 networkGuard?.ObserveAuthenticationAttack(failure.Source,now);
+                                events.Add(15,"Warning","Authentication attack-pattern hypothesis",
+                                    $"{failure.Count} verified remote failures; {TrafficRules.MitreTechnique("repeated-logon-failures")}. Authentication attempts are not proof of compromise.");
+                            }
                         }
                     }
                     break;
@@ -165,7 +173,15 @@ public sealed class EventSensors : IDisposable
                 case 4688:
                 {
                     var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"),Get("ParentProcessName"));
-                    if(indicator!=null)events.Add(36,"Warning","Suspicious execution indicator",indicator);
+                    if(indicator!=null)
+                    {
+                        events.Add(36,"Warning","Suspicious execution indicator",indicator);
+                        var commandProcess=Path.GetFileName(Get("NewProcessName"));
+                        if(string.Equals(commandProcess,"powershell.exe",StringComparison.OrdinalIgnoreCase)||
+                           string.Equals(commandProcess,"pwsh.exe",StringComparison.OrdinalIgnoreCase))
+                            events.Add(15,"Warning","Script-execution technique hypothesis",
+                                TrafficRules.MitreTechnique("script-powershell")!+"; evidence is a Windows process-creation audit.");
+                    }
                     if(Get("TokenElevationType")=="%%1937")
                     {
                         events.Add(45,"Info","Elevated process token observed",
@@ -203,6 +219,13 @@ public sealed class EventSensors : IDisposable
         }
         else if(channel.Contains("Windows Defender"))
         {
+            if(record.Id is 1125 or 1126)
+            {
+                Interlocked.Increment(ref networkProtectionDetections);
+                events.Add(14,record.Id==1126?"High":"Warning",
+                    record.Id==1126?"Defender Network Protection blocked a connection":"Defender Network Protection audit detection",
+                    $"Windows Defender Operational event {record.Id}; Windows-owned threat detection (not OTS IDS enforcement). Consult the original event for target and rule details.");
+            }
             events.Add(76,record.Id==1116?"High":"Info","Microsoft Defender event",
                 $"Event {record.Id}; consult Windows Security Protection History for detection and remediation details");
             if(record.Id==1116&&EndpointSignals.DefenderKeyloggerIndicator(Get("Threat Name")+" "+Get("ThreatName")))
@@ -232,7 +255,13 @@ public sealed class EventSensors : IDisposable
                     $"A publicly resolved DNS name subsequently returned a local/private address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
             if(finding.ParsedAddressAnswer && Get("QueryStatus")=="0" && Domains?.IsListed(Get("QueryName"))==true)
                 events.Add(75,"High","Listed malicious-domain DNS lookup",$"Windows DNS event observed an exact current feed hostname: {Wire.Clean(Get("QueryName"),128)}. Source is a public unsigned mirror; verify context.");
-            events.Add(16,"Info","DNS observation",$"{Get("QueryName")} {Get("QueryStatus")}");
+            var attributedPid=Get("ClientPID");
+            if(string.IsNullOrEmpty(attributedPid))attributedPid=Get("ClientProcessId");
+            string attribution=int.TryParse(attributedPid,out int clientPid)&&clientPid>0
+                ?$"provider-reported client PID {clientPid} (unverified)"
+                :"no trustworthy initiating-process attribution";
+            events.Add(16,"Info","DNS observation",
+                $"{Wire.Clean(Get("QueryName"),160)} status={Wire.Clean(Get("QueryStatus"),16)}; {attribution}");
         }
         else if(channel=="System")
         {
