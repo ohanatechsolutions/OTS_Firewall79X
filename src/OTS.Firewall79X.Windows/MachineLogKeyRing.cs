@@ -41,6 +41,10 @@ public sealed class MachineLogKeyRing
             original=ProtectedData.Unprotect(File.ReadAllBytes(legacyPath),null,DataProtectionScope.LocalMachine);
         else
         {
+            // Missing historical key with retained logs is an integrity incident.
+            // Never silently mint a replacement that cannot authenticate evidence.
+            if(Directory.EnumerateFiles(directory,"events*.jsonl*").Any())
+                throw new InvalidDataException("Historical integrity key missing; retained security logs preserved");
             original=RandomNumberGenerator.GetBytes(32);
             WriteBinaryAtomic(legacyPath,ProtectedData.Protect(original,null,DataProtectionScope.LocalMachine));
         }
