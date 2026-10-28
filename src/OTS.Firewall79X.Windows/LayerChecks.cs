@@ -491,7 +491,7 @@ public sealed class LayerChecks : IDisposable
                 if(!pending.Verified)return Missing(id,$"{fixes.Count} historical hotfix records; "+updateState);
                 return new(id,LayerMode.Auditing,false,$"{fixes.Count} historical installed hotfixes; "+updateState,
                     "Pending count is a completed native Windows Update Agent search, not proof the system is secure. Missing updates may include non-security items. Third-party package CVE matching has no verified vendor/version-to-advisory correlation configured.");
-            case 73:return firewall!=null?Good(id,FirewallAudit.Analyze(firewall.Value.Rules),LayerMode.Auditing,"Exact-match analysis only; full WFP/IPsec/GPO precedence and range shadowing are not modeled."):Missing(id,"Firewall rule enumeration unavailable");
+            case 73:return firewall!=null?Good(id,FirewallAudit.Analyze(firewall.Value.Rules),LayerMode.Auditing,"Bounded potential CIDR/port overlap audit; not effective-rule or WFP/GPO/IPsec precedence verification."):Missing(id,"Firewall rule enumeration unavailable");
             case 75:
                 if(DomainFeed?.Active is not { } domains)return Missing(id,DomainFeed?.Status??"No validated domain intelligence available");
                 return DomainBlocks?.Applied==true

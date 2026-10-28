@@ -59,3 +59,7 @@ See [architecture](docs/ARCHITECTURE.md), [Section I coverage](docs/SECTION_I_IM
 ## Network protection implementation notes
 
 See [Section A network evidence](docs/SECTION_A_NETWORK_EVIDENCE.md) for the temporary inbound source-rule policy, conservative thresholds, rollback limitations, UDP socket inventory, Public-profile SMB review, Bluetooth radio telemetry and the remaining layers 1–10 acceptance gaps. The present build is **not** a replacement for Windows Defender Firewall and has not passed physical Windows 10/11 Section A acceptance tests.
+
+## Section H engineering work (layers 66–74)
+
+See [Section H engineering evidence](docs/SECTION_H_ENGINEERING.md) for new integrity-checked forensic snapshots, persisted quarterly posture history, recovery-kit generation, safe encrypted off-device export primitives, expanded firewall overlap hints, and regression tests. Optional unattended encrypted folder versions and encrypted log shipping can now be **explicitly configured** from Tools & reports; both default to OFF and require an administrator-approved removable/network destination and a separately preserved recovery passphrase. Full physical-Windows, UNC/service-access, crash-recovery and all-layer acceptance are **not yet certified**. The application remains a development preview.
