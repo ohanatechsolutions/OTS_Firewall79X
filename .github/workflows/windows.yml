@@ -1,12 +1,10 @@
 name: Windows build and installation verification
 on:
   push:
-    branches: [main, build/windows-security-stack, feature/section-e-access-security]
+    branches: [main, build/windows-security-stack]
   pull_request:
     branches: [main]
   workflow_dispatch:
-  pull_request:
-    branches: [main]
 permissions:
   contents: read
 concurrency:
