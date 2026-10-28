@@ -15,7 +15,7 @@ public partial class MainWindow : Window
 {
     private sealed record Row(int Id,string Name,string Category,string Mode,string Health,string Evidence,double? Duration);
     private DesktopNotifications? notifications;private DateTimeOffset lastAlert=DateTimeOffset.UtcNow,lastNotification=DateTimeOffset.MinValue;
-    private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private readonly DispatcherTimer timer;private bool ready;
+    private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private ExternalExposureAudit.Result? exposureResult;private readonly DispatcherTimer timer;private bool ready;
     private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
     public MainWindow()
     {
@@ -48,6 +48,13 @@ public partial class MainWindow : Window
             {
                 var overlay=userMonitor.Results().ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>overlay.GetValueOrDefault(l.Id,l)).ToList();var score=Posture.Calculate(layers,dashboard.Enabled);
                 dashboard=dashboard with{Layers=layers,Score=score.Score,Confidence=score.Confidence,Events=dashboard.Events.Concat(userMonitor.Events()).OrderByDescending(e=>e.Time).Take(300).ToList()};
+            }
+            if(exposureResult is { } evidence&&DateTimeOffset.UtcNow-evidence.ObservedAt<TimeSpan.FromHours(1))
+            {
+                dashboard=dashboard with{Layers=dashboard.Layers.Select(l=>l.Id==49
+                    ?l with{Evidence=l.Evidence+"; "+evidence.Evidence,
+                             Limitation=l.Limitation+"; "+evidence.Limitation}
+                    :l).ToList()};
             }
             ProtectionText.Text=stale?"Protection status stale — service health requires attention":dashboard.Protection;
             Toggle.Content=dashboard.Enabled?"Turn OFF":"Turn ON";ScoreText.Text=stale?"Unknown":$"{dashboard.Score} / 100";ConfidenceText.Text=$"Observed data: {dashboard.Confidence:F1}%";
@@ -98,6 +105,28 @@ public partial class MainWindow : Window
     {
         var report=Report();if(report==null){MessageBox.Show("No service report available yet.");return;}
         var save=new SaveFileDialog{Filter="Markdown report|*.md",FileName=$"OTS-Firewall79X-Report-{DateTime.Now:yyyyMMdd}.md"};if(save.ShowDialog()==true)try{File.WriteAllText(save.FileName,report);StatusLine.Text="Report saved.";}catch(Exception ex){MessageBox.Show(ex.Message);}
+    }
+    private async void ExternalExposureClick(object sender,RoutedEventArgs e)
+    {
+        const string notice="This optional lookup discloses your current public IPv4 address to api4.ipify.org and Shodan InternetDB. The external provider may retain the request. Its previously observed ports are NOT a live or complete scan, and a missing record does NOT prove safety. Continue?";
+        if(MessageBox.Show(notice,"Optional external exposure intelligence",MessageBoxButton.YesNo,MessageBoxImage.Information)!=MessageBoxResult.Yes)
+            return;
+        if(sender is System.Windows.Controls.Button button)button.IsEnabled=false;
+        try
+        {
+            ExternalExposureResult.Text="Checking outside-observed historical port intelligence…";
+            using var ct=new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            exposureResult=await ExternalExposureAudit.LookupAsync(http,ct.Token);
+            ExternalExposureResult.Text=exposureResult.Evidence+" "+exposureResult.Limitation;
+            await Refresh();
+        }
+        catch(Exception ex)
+        {
+            exposureResult=null;
+            ExternalExposureResult.Text="External lookup unavailable: "+ex.GetType().Name+
+                ". Local listeners do not demonstrate external reachability. No safety conclusion can be drawn.";
+        }
+        finally {if(sender is System.Windows.Controls.Button button)button.IsEnabled=true;}
     }
     private async void SecretsClick(object sender,RoutedEventArgs e)
     {
