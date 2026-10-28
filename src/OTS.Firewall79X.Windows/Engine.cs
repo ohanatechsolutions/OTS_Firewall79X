@@ -178,7 +178,7 @@ public sealed class Engine : IDisposable
             case 72:
                 try
                 {
-                    var path=Paths.At("reports","daily-posture.json");
+                    var path=Path.Combine(Paths.At("reports"),"daily-posture.json");
                     var samples=QuarterlyHistory.Load(path);
                     return samples.Count>0?Good($"{samples.Count} historical daily posture samples; next completed-quarter report after {nextReport:yyyy-MM-dd}",LayerMode.Monitoring,"Samples require a running active service; missing days remain gaps and quarterly aggregation occurs upon next active monitor cycle.")
                         :new(id,LayerMode.Idle,false,"No completed daily history sample exists yet","First active monitoring cycle will attempt persistent sampling.");
