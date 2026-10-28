@@ -76,7 +76,8 @@ public sealed class EventSensors : IDisposable
                     lock(sync){var ip=Get("IpAddress");if(failures.Count>4096)failures.Clear();if(!failures.TryGetValue(ip,out var q))failures[ip]=q=new();q.Enqueue(now);while(q.Count>0&&q.Peek()<now.AddMinutes(-2))q.Dequeue();if(q.Count>=8)events.Add(41,"High","Repeated failed authentication",$"{q.Count} failures from {ip} within 2 minutes; no automatic ban");}break;
                 case 4672:case 4673:case 4674:case 4720:case 4722:case 4724:case 4726:
                 case 4728:case 4732:case 4735:case 4737:case 4738:case 4756:case 4719:case 1102:
-                    events.Add(27,"Warning","Account or privilege-policy event",
+                    events.Add(27,record.Id is 4672 or 4673 or 4674?"Info":"Warning",
+                        record.Id is 4672 or 4673 or 4674?"Privilege-use audit event":"Account or privilege-policy event",
                         $"Security event {record.Id}; target {Wire.Clean(Get("TargetUserName"),80)}; confirm authorization in Windows Security log.");break;
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
                 case 4663:
@@ -135,7 +136,16 @@ public sealed class EventSensors : IDisposable
                     $"A publicly resolved DNS name subsequently returned a local/private address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
             events.Add(16,"Info","DNS observation",$"{Get("QueryName")} {Get("QueryStatus")}");
         }
-        else events.Add(25,"Warning","Service configuration changed",$"Windows event {record.Id}; service {Get("ServiceName")}");
+        else if(channel=="System")
+        {
+            if(record.Id is 7045 or 7040)
+                events.Add(25,"Warning","Service installation or configuration changed",
+                    $"Windows System event {record.Id}; service {Wire.Clean(Get("ServiceName"),100)}");
+            else if(record.Id==219)
+                events.Add(26,"Warning","Windows driver loading warning",
+                    "System event 219: review the native Kernel-PnP driver event for details.");
+            // Event 7036 is routine service start/stop, not a configuration change.
+        }
     }
     public bool Has(string channel){lock(sync)return Health.GetValueOrDefault(channel,"").StartsWith("Subscribed");}
     public void Dispose(){foreach(var watcher in watchers)watcher.Dispose();watchers.Clear();}
