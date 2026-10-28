@@ -536,6 +536,15 @@ Test("Section G: exact owned-rule identities never delete drifted or lookalike p
         int profiles=int.MaxValue,bool enabled=true)=>
         OwnedFirewallRule.Matches(name,description,remote,direction,action,protocol,profiles,enabled);
     Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8"));
+    Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.255"));
+    Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/32"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.0"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/24"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8,1.1.1.1"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4/255.255.255.255"));
+    Assert(Mine(intel+"1.1.1.1",OwnedFirewallRule.IntelligenceDescription,"1.1.1.1/255.255.255.255",2));
+    Assert(OwnedFirewallRule.ExactHostAddress("2606:4700:4700::1111/128","2606:4700:4700::1111"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("2606:4700:4700::1111/64","2606:4700:4700::1111"));
     Assert(Mine(intel+"1.1.1.1",OwnedFirewallRule.IntelligenceDescription,"1.1.1.1",2));
     Assert(!Mine(prefix+"8.8.8.8","modified by third party","8.8.8.8"));
     Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4"));
