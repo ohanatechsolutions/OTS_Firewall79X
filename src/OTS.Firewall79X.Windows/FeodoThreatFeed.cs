@@ -29,7 +29,7 @@ public sealed class FeodoThreatFeed : IDisposable
         {
             var snapshot=Active;
             return snapshot!=null
-                ? $"Feodo Tracker HTTPS observation feed: {snapshot.Addresses.Count} IPv4 C2 indicators; source updated {snapshot.UpdatedUtc:O}. No OTS firewall blocks installed."
+                ? $"Feodo Tracker HTTPS observation feed: {snapshot.Addresses.Count} IPv4 C2 indicators; source updated {snapshot.UpdatedUtc:O}. Only individually observed matching destinations may receive temporary rules; no full-feed blocking."
                 : "Feodo Tracker feed unavailable or stale: " + health + ". No OTS firewall blocks installed.";
         }
     }

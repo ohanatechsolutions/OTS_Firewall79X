@@ -223,5 +223,38 @@ Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and
     Throws<InvalidDataException>(()=>
         TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
 });
+Test("Network restrictions reject outbound, private, mapped and documentation sources",()=>{
+    var now=DateTimeOffset.UtcNow;var detector=new NetworkAbuseWindow();
+    foreach(var ip in new[]{"127.0.0.1","10.0.2.8","192.0.2.9","198.51.100.20","203.0.113.24","::1","fc00::123","2001:db8::1","::ffff:8.8.8.8"})
+    {
+        Assert(!NetworkAbuseWindow.EligiblePublicSource(ip),ip);
+        for(int i=0;i<50;i++)Assert(!detector.Observe(ip,"%%14592",1000+i,now).Restrict,ip);
+    }
+    Assert(!detector.Observe("8.8.8.8","%%14593",80,now).Eligible);
+    Assert(!detector.Observe("8.8.8.8","Inbound",80,now).Eligible);
+    Assert(!detector.Observe("8.8.8.8","%%14592",0,now).Eligible);
+    Assert(!NetworkAbuseWindow.EligiblePublicSource("8.8.8.8",new[]{"8.8.8.8"}));
+    Assert(NetworkAbuseWindow.EligiblePublicSource("8.8.8.8"));
+    Assert(NetworkAbuseWindow.EligiblePublicSource("2606:4700:4700::1111"));
+});
+Test("Inbound scan escalates only after 20 distinct ports and cools down",()=>{
+    var detector=new NetworkAbuseWindow();var now=DateTimeOffset.UtcNow;
+    for(int i=1;i<=19;i++)
+    {
+        var f=detector.Observe("8.8.4.4","%%14592",i,now.AddMilliseconds(i));
+        Assert(f.Eligible && !f.Restrict);
+        if(i==12)Assert(f.Scan);
+    }
+    Assert(detector.Observe("8.8.4.4","%%14592",20,now.AddSeconds(1)).Restrict);
+    Assert(!detector.Observe("8.8.4.4","%%14592",21,now.AddSeconds(2)).Restrict);
+    Assert(detector.Observe("8.8.4.4","%%14592",22,now.AddMinutes(21)).Eligible);
+});
+Test("Flood threshold does not treat a single repetitive service as a ban",()=>{
+    var detector=new NetworkAbuseWindow();var now=DateTimeOffset.UtcNow;
+    for(int i=0;i<200;i++)Assert(!detector.Observe("1.1.1.1","%%14592",443,now.AddMilliseconds(i)).Restrict);
+    var other=new NetworkAbuseWindow();bool restricted=false;
+    for(int i=0;i<150;i++)restricted|=other.Observe("1.0.0.1","%%14592",1000+i%4,now.AddMilliseconds(i)).Restrict;
+    Assert(restricted);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
