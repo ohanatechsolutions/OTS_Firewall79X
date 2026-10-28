@@ -141,6 +141,89 @@ Test("TPM and BitLocker unknown-state handling",()=>{
     Assert(SecurityDeviceStates.VolumeProtected("0")==false);
     Assert(SecurityDeviceStates.VolumeProtected("2")==null);
 });
+
+Test("Section G: strict IPC request schema rejects property injection and duplicate keys",()=>{
+    void Bad(string json)
+    {
+        using var m=new MemoryStream();
+        Wire.WriteAsync(m,new Request("status"),default).GetAwaiter().GetResult();
+        var bytes=System.Text.Encoding.UTF8.GetBytes(json);
+        m.SetLength(0);m.Write(BitConverter.GetBytes(bytes.Length));m.Write(bytes);m.Position=0;
+        Throws<InvalidDataException>(()=>Wire.ReadAsync<Request>(m,1024,default).GetAwaiter().GetResult());
+    }
+    Bad("{\"Command\":\"off\",\"Unknown\":\"ignored\"}");
+    Bad("{\"Command\":\"status\",\"Command\":\"off\"}");
+    Bad("{\"Command\":\"status\",\"Layer\":1}");
+    Bad("{\"Command\":\"status\",\"Enabled\":true}");
+    // Unknown command names are well-formed requests, but the server explicitly denies them.
+    Assert(!Wire.ValidRequest(new Request("other")));
+    Bad("{\"Command\":null}");
+    Bad("[]");
+    Bad("{\"command\":\"status\"}");
+    Assert(Wire.ValidRequest(new Request("status")));
+    Assert(!Wire.ValidRequest(new Request("off",1)));
+});
+Test("Section G: restart throttling prevents rapid loops and resets after one hour",()=>{
+    var policy=new RestartBudget();var t=DateTimeOffset.UtcNow;
+    Assert(policy.TryAcquire(t));
+    Assert(!policy.TryAcquire(t.AddSeconds(2)));
+    Assert(policy.TryAcquire(t.AddMinutes(2)));
+    Assert(policy.TryAcquire(t.AddMinutes(4)));
+    Assert(!policy.TryAcquire(t.AddMinutes(6)));
+    Assert(policy.TryAcquire(t.AddHours(2)));
+    Assert(!policy.TryAcquire(t.AddHours(1)));
+});
+Test("Section G: independent watchdog heartbeat policy",()=>{
+    var now=DateTimeOffset.UtcNow;
+    Assert(!HeartbeatPolicy.IsStale(now.AddMinutes(-5),now,TimeSpan.FromMinutes(8)));
+    Assert(HeartbeatPolicy.IsStale(now.AddMinutes(-9),now,TimeSpan.FromMinutes(8)));
+    Assert(HeartbeatPolicy.IsStale(now.AddMinutes(6),now,TimeSpan.FromMinutes(8)));
+    Assert(!HeartbeatPolicy.IsStale(now,now,TimeSpan.Zero));
+});
+Test("Section G: resource budget honors battery, CPU, memory and low disk",()=>{
+    var ac=ResourceBudget.Evaluate(false,0,50,10L*1024*1024*1024,100L*1024*1024*1024);
+    Assert(ac.CycleInterval==TimeSpan.FromSeconds(30)&&!ac.DeferNonessentialDiskWork);
+    Assert(ResourceBudget.Evaluate(true,0,50,long.MaxValue,0).CycleInterval==TimeSpan.FromSeconds(90));
+    Assert(ResourceBudget.Evaluate(false,12,50,long.MaxValue,0).CycleInterval==TimeSpan.FromSeconds(60));
+    Assert(ResourceBudget.Evaluate(true,0,300,long.MaxValue,0).CycleInterval==TimeSpan.FromSeconds(180));
+    var disk=ResourceBudget.Evaluate(false,0,50,200L*1024*1024,100L*1024*1024*1024);
+    Assert(disk.DeferNonessentialDiskWork&&disk.CycleInterval>=TimeSpan.FromSeconds(180));
+    Throws<ArgumentOutOfRangeException>(()=>ResourceBudget.Evaluate(false,double.NaN,0,1,2));
+});
+Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and untrusted publisher",()=>{
+    using var publisher=System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+    using var impostor=System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+    var key=publisher.ExportSubjectPublicKeyInfo();var now=DateTimeOffset.UtcNow;
+    var folder=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(folder);
+    var file=Path.Combine(folder,"update.bin");File.WriteAllText(file,"verified bytes");
+    var digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
+    var manifest=new TrustedArtifacts.Manifest("OTS Firewall79X","2.0.0",now.AddMinutes(-1),now.AddHours(6),
+        "software",[new TrustedArtifacts.Artifact("update.bin",new FileInfo(file).Length,digest)]);
+    string Signed(TrustedArtifacts.Manifest data,System.Security.Cryptography.ECDsa signer)
+    {
+        var payload=JsonSerializer.SerializeToUtf8Bytes(data,Wire.Json);
+        var sig=signer.SignData(payload,System.Security.Cryptography.HashAlgorithmName.SHA256);
+        return JsonSerializer.Serialize(new TrustedArtifacts.Envelope(
+            Convert.ToBase64String(payload),Convert.ToBase64String(sig)),Wire.Json);
+    }
+    var envelope=Signed(manifest,publisher);
+    Assert(TrustedArtifacts.Verify(envelope,key,folder,new Version(1,0),now).Version=="2.0.0");
+    Throws<System.Security.Cryptography.CryptographicException>(()=>
+        TrustedArtifacts.Verify(Signed(manifest,impostor),key,folder,new Version(1,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(envelope,key,folder,new Version(3,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(Signed(manifest with{ExpiresUtc=now.AddSeconds(-1)},publisher),
+            key,folder,new Version(1,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(Signed(manifest with{Files=[new TrustedArtifacts.Artifact("../update.bin",1,digest)]},publisher),
+            key,folder,new Version(1,0),now));
+    File.WriteAllText(file,"tampered bytes");
+    Throws<System.Security.Cryptography.CryptographicException>(()=>
+        TrustedArtifacts.Verify(envelope,key,folder,new Version(1,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
+});
 Test("Network restrictions reject outbound, private, mapped and documentation sources",()=>{
     var now=DateTimeOffset.UtcNow;var detector=new NetworkAbuseWindow();
     foreach(var ip in new[]{"127.0.0.1","10.0.2.8","192.0.2.9","198.51.100.20","203.0.113.24","::1","fc00::123","2001:db8::1","::ffff:8.8.8.8"})
@@ -214,6 +297,54 @@ Test("Layer 42 parses effective SSH policy without trusting defaults",()=>{
     Assert(weak.Weak&&!weak.Hardened);
     Assert(!EffectiveSshPolicy.Parse("passwordauthentication no").Hardened);
     Throws<InvalidDataException>(()=>EffectiveSshPolicy.Parse(new string('x',256*1024+1)));
+});
+Test("Section D parses genuine Security 4663 decimal/hex PIDs only",()=>{
+    Assert(EndpointSignals.AuditProcessId("0x3e8")==1000);
+    Assert(EndpointSignals.AuditProcessId("1000")==1000);
+    Assert(EndpointSignals.AuditProcessId("0")==null);
+    Assert(EndpointSignals.AuditProcessId("0xffffffff")==null);
+    Assert(EndpointSignals.AuditProcessId("not a pid")==null);
+});
+Test("Section D transfer correlation is PID/public address/state constrained",()=>{
+    var c=new Connection(42,"copy","[127.0.0.1]:1","[8.8.8.8]:443","Established");
+    Assert(EndpointSignals.PublicTcpForProcess(42,[c]));
+    Assert(!EndpointSignals.PublicTcpForProcess(41,[c]));
+    Assert(!EndpointSignals.PublicTcpForProcess(42,[c with{Remote="[192.168.1.1]:443"}]));
+    Assert(!EndpointSignals.PublicTcpForProcess(42,[c with{State="Listening"}]));
+});
+Test("Section D miner alerts require CPU persistence plus corroboration",()=>{
+    Assert(!EndpointSignals.MiningIndicator("chrome.exe",20,false));
+    Assert(!EndpointSignals.MiningIndicator("xmrig.exe",1,true));
+    Assert(EndpointSignals.MiningIndicator("xmrig.exe",3,false));
+    Assert(EndpointSignals.MiningIndicator("xmrig",3,false));
+    Assert(EndpointSignals.MiningIndicator("ordinary.exe",4,true));
+    Assert(!EndpointSignals.MiningIndicator("ordinary.exe",3,true));
+    Assert(EndpointSignals.PoolPortSeen(42,[new Connection(42,"example","[::]:1","[8.8.8.8]:3333","Established")]));
+});
+Test("Section D Defender indicators do not claim arbitrary input-hook detection",()=>{
+    Assert(EndpointSignals.DefenderKeyloggerIndicator("Trojan:Win32/Keylogger.A"));
+    Assert(EndpointSignals.DefenderKeyloggerIndicator("captures keystrokes"));
+    Assert(!EndpointSignals.DefenderKeyloggerIndicator("ordinary service update"));
+    Assert(!EndpointSignals.DefenderKeyloggerIndicator(new string('X',400)));
+});
+Test("Section D BCD parser flags only explicit weakening values",()=>{
+    Assert(BootPolicyAudit.Parse("testsigning Yes\n").WeakeningDetected);
+    Assert(BootPolicyAudit.Parse("nointegritychecks on\n").WeakeningDetected);
+    Assert(!BootPolicyAudit.Parse("testsigning No\n").WeakeningDetected);
+    Assert(!BootPolicyAudit.Parse("").Parsed);
+    Assert(!BootPolicyAudit.Parse("unrelated text").Parsed);
+});
+Test("Section D Docker audit distinguishes unverified TCP from verified setting",()=>{
+    Assert(DockerDaemonAudit.Parse("{\"hosts\":[\"tcp://0.0.0.0:2375\"]}").UnverifiedTcpHost);
+    Assert(!DockerDaemonAudit.Parse("{\"hosts\":[\"tcp://0.0.0.0:2376\"],\"tlsverify\":true}").UnverifiedTcpHost);
+    Assert(!DockerDaemonAudit.Parse("{\"hosts\":[\"npipe:////./pipe/docker_engine\"]}").UnverifiedTcpHost);
+    Assert(!DockerDaemonAudit.Parse("{invalid}").Parsed);
+});
+Test("Section D execution indicators require suspicious command or parent lineage",()=>{
+    Assert(Detections.ExecutionIndicator("powershell.exe","Get-Date","winword.exe")!=null);
+    Assert(Detections.ExecutionIndicator("powershell.exe","Get-Date","explorer.exe")==null);
+    Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
+    Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
 });
 Test("Section C endpoint parser rejects malformed and parses scoped IPv6",()=>{
     var ip4=TrafficRules.ParseEndpoint("[192.168.1.10]:587");
