@@ -13,8 +13,8 @@ namespace OTS.Firewall79X.Windows;
 /// </summary>
 public sealed class TemporaryFirewallGuard : IDisposable
 {
-    private const string Prefix="OTS Firewall79X temporary inbound source ";
-    private const string IntelPrefix="OTS Firewall79X temporary outbound intelligence ";
+    private const string Prefix=TemporaryRuleIdentity.InboundPrefix;
+    private const string IntelPrefix=TemporaryRuleIdentity.OutboundPrefix;
     private readonly object gate=new();
     private readonly Dictionary<string,DateTimeOffset> active=new(StringComparer.Ordinal);
     private readonly Dictionary<string,DateTimeOffset> intelligence=new(StringComparer.Ordinal);
@@ -47,20 +47,39 @@ public sealed class TemporaryFirewallGuard : IDisposable
         }
         return result;
     }
-    private static void RemoveOwned(dynamic policy)
+    private static (List<string> Owned,bool Collision) InspectOwned(dynamic policy,string? proposed=null)
     {
         var names=new List<string>();
+        bool collision=false;
+        int inspected=0;
         foreach(dynamic rule in policy.Rules)
         {
             try
             {
+                if(++inspected>20000)throw new InvalidDataException("Firewall rule enumeration budget exceeded");
                 string name=(string)rule.Name;
-                if(name.StartsWith(Prefix,StringComparison.Ordinal)||name.StartsWith(IntelPrefix,StringComparison.Ordinal))names.Add(name);
+                if(proposed!=null && name.Equals(proposed,StringComparison.Ordinal))collision=true;
+                if(!TemporaryRuleIdentity.UsesReservedName(name))continue;
+                bool isOwned=TemporaryRuleIdentity.IsOwned(name,(string?)rule.Description,
+                    (string?)rule.Grouping,(string?)rule.RemoteAddresses,
+                    (int)rule.Direction,(int)rule.Action,(int)rule.Protocol);
+                if(!isOwned)throw new InvalidDataException("A firewall rule uses a reserved OTS name without verifiable ownership: "+Wire.Clean(name,100));
+                names.Add(name);
             }
             finally { Marshal.ReleaseComObject(rule); }
             if(names.Count>128)throw new InvalidDataException("Unexpected number of owned rules; refusing bulk deletion");
         }
-        foreach(var name in names)policy.Rules.Remove(name);
+        return (names,collision);
+    }
+    private static void RemoveOwned(dynamic policy)
+    {
+        var state=(ValueTuple<List<string>,bool>)InspectOwned(policy);
+        foreach(var name in state.Item1)policy.Rules.Remove(name);
+    }
+    private static void RequireNoCollision(dynamic policy,string proposed)
+    {
+        if(((ValueTuple<List<string>,bool>)InspectOwned(policy,proposed)).Item2)
+            throw new InvalidOperationException("An existing firewall rule uses the target OTS name; refusing replacement");
     }
     public void Start()
     {
@@ -96,12 +115,13 @@ public sealed class TemporaryFirewallGuard : IDisposable
             dynamic? policy=null;dynamic? rule=null;
             try
             {
-                policy=Policy();
+                policy=Policy();RequireNoCollision(policy,RuleName(finding.Address));
                 var type=Type.GetTypeFromProgID("HNetCfg.FWRule") ??
                     throw new PlatformNotSupportedException("Windows Firewall rule API unavailable");
                 rule=Activator.CreateInstance(type)!;
                 rule.Name=RuleName(finding.Address);
-                rule.Description="OTS-owned temporary inbound restriction for repeated already-blocked attempts; reclaimed when disabled or expired";
+                rule.Description=TemporaryRuleIdentity.Marker+"inbound";
+                rule.Grouping=TemporaryRuleIdentity.Group;
                 rule.Direction=1; // NET_FW_RULE_DIR_IN
                 rule.Action=0; // NET_FW_ACTION_BLOCK
                 rule.Protocol=256; // NET_FW_IP_PROTOCOL_ANY (IPv4 or IPv6)
@@ -137,12 +157,13 @@ public sealed class TemporaryFirewallGuard : IDisposable
             dynamic? policy=null;dynamic? rule=null;
             try
             {
-                policy=Policy();
+                policy=Policy();RequireNoCollision(policy,IntelPrefix+address);
                 var type=Type.GetTypeFromProgID("HNetCfg.FWRule")??
                     throw new PlatformNotSupportedException("Windows Firewall rule API unavailable");
                 rule=Activator.CreateInstance(type)!;
                 rule.Name=IntelPrefix+address;
-                rule.Description="OTS temporary rule for observed, fresh Feodo intelligence; removed at expiry/feed failure/OFF";
+                rule.Description=TemporaryRuleIdentity.Marker+"intelligence";
+                rule.Grouping=TemporaryRuleIdentity.Group;
                 rule.Direction=2;  // NET_FW_RULE_DIR_OUT
                 rule.Action=0;     // NET_FW_ACTION_BLOCK
                 rule.Protocol=256; // Any protocol

@@ -5,7 +5,7 @@ It does **not** satisfy the full network-protection acceptance criteria. These a
 security capabilities, not a count of completed catalog entries.
 
 ## New behavior
-- Windows Security **5157** telemetry is consumed only when the **inbound direction
+- Windows Security **5157** TCP telemetry now uses the Microsoft-documented endpoint layout: `SourceAddress`/`SourcePort` are LOCAL, `DestAddress`/`DestPort` are REMOTE, and inbound restrictions use `DestAddress` as the remote IP and `SourcePort` as the scanned local port. UDP, ICMP, invalid port fields and outbound 5157 records never trigger this auto-ban. Only when the **inbound direction
   field is explicitly %%14592**. Outbound events, malformed ports, private,
   loopback, link-local, documentation, reserved and IPv4-mapped IPv6 addresses are
   ineligible; local interface, DNS, DHCP and gateway addresses are rechecked
@@ -71,3 +71,23 @@ Windows `GetExtendedUdpTable` now collects PID-attributed IPv4/IPv6 **bound UDP 
 ## Reactive observed Feodo intelligence restrictions
 
 An outbound TCP connection actually observed to a fresh, strictly parsed Feodo Tracker IPv4 endpoint may trigger one five-minute exact-destination Windows Firewall outbound deny rule (maximum 16). The service rechecks that the destination is not a local adapter, DNS, gateway or DHCP address; on expiration or feed staleness it removes its own rules in normal operation. It also cleans up on stack OFF/service restart. This is not proactive full-feed blocking, independently signed feed verification, IPv6 coverage, proof of malware, proof of blocked packets or guaranteed session termination. A hard service crash may leave a rule until recovery.
+
+## Corrected Security 5157 parsing
+
+Earlier Section A builds mistakenly treated the LOCAL `SourceAddress` as the remote attacker and the REMOTE `DestPort` as a scanned local port. The corrected parser rejects unexpected direction, invalid address families/ports, unsupported protocol and special-purpose remote addresses. Both scan alerting and temporary exact-source restrictions use one validated remote destination/local source-port mapping. See Microsoft Event 5157 documentation: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-5157 .
+
+## Firewall-rule ownership and test isolation
+
+Rule cleanup now requires an exact registered rule prefix, exact public remote IP, direction, action, any-protocol selector, and either an exact current ownership group/marker or the precisely recognized legacy description. A prefix collision with any unrecognized rule causes fail-closed refusal instead of deleting or replacing it. Administrative users remain trusted; these tags are not cryptographic authorization. The Windows integration test no longer starts a second guard, which previously could remove real service-owned temporary rules during testing.
+
+## Bluetooth Classic paired and connection-state observation
+
+Added a passive Windows Bluetooth Classic cached-device enumeration using `BluetoothFindFirstDevice`/`BluetoothFindNextDevice`. It compares authenticated (paired/bonded) and connected flags to the previous observation and raises warnings for newly seen paired or connected devices. Device hardware addresses are never placed directly in alerts: only fingerprints are emitted. It does **not** issue Bluetooth inquiry, pairing, or radio changes. Bluetooth LE and alternative stacks may be unobservable, and Windows cached state does not independently prove user authorization. Real Bluetooth hardware validation remains required.
+
+## Packet-header validation engine (layer 4 — not yet enforcing)
+
+Added `IpPacketValidator.Inspect` as a bounded, memory-safe pure IPv4/IPv6 parser. IPv4 checks include header length, total length, checksum, fragmentation flag consistency and UDP length; IPv6 checks include payload length, extension-chain bounds, fragment reserved flags and UDP length. Unknown encrypted/unsupported protocols and truncated capture buffers produce **Unsupported**, not a blocking verdict. A structurally valid fragment is not deemed safe against overlap/evasion without reassembly. **Critical limitation:** no WFP callout/raw-packet delivery is integrated, so this parser is currently exercised only by tests and does not inspect real host traffic. Layer 4 must remain **Unavailable** in live health reports until safe native packet ingestion and enforced filtering are implemented and tested.
+
+## Live Windows firewall COM lifecycle acceptance probe (CI-only)
+
+A dedicated disposable-Windows-runner probe now requires `GITHUB_ACTIONS=true`, administrator privileges, and a **disabled** OTS service. It simulates validated blocked-event metadata, verifies the exact installed inbound source rule and reactive outbound intelligence rule through the real Windows Firewall COM API, advances expiration, and confirms removal plus complete absence of OTS-owned rules. The existing smoke-test baseline then checks that all unrelated Windows rules remained unchanged. This is **rule creation/rollback testing**, not a live SYN/UDP flood, IP spoofing attempt, or measured packet drop. It must not run on a personal machine.

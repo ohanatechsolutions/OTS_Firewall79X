@@ -37,6 +37,8 @@ function AssertFirewallUnchanged([string]$Stage) {
 }
 $policyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
 $oldAutorun = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
+$oldNoAutorun = (Get-ItemProperty $policyPath -Name NoAutorun -ErrorAction SilentlyContinue).NoAutorun
+$oldNonVolume = (Get-ItemProperty $policyPath -Name NoAutoplayfornonVolume -ErrorAction SilentlyContinue).NoAutoplayfornonVolume
 $before = FirewallSnapshot baseline
 $setup = (Resolve-Path artifacts/release/OTS-Firewall79X-Setup.exe).Path
 $root = "$env:ProgramFiles\OTS Firewall79X"
@@ -65,7 +67,13 @@ $null=FirewallSnapshot after-user-profile
 Check 'Catalog and transaction self-check' { RunExe $helper '--selftest --quiet' }
 Check 'Pause and resume commands' { RunExe $helper '--pause --quiet';RunExe $helper '--on --quiet' }
 Check 'Off and recovery' { RunExe $helper '--off --quiet';RunExe $helper '--restore --quiet' }
-Check 'Restoration preserves original AutoRun policy' { $current = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun;if($current -ne $oldAutorun){throw 'Original AutoRun policy not restored'} }
+Check 'Restoration preserves all original AutoRun and AutoPlay policies' {
+  foreach ($pair in @(@('NoDriveTypeAutoRun',$oldAutorun),@('NoAutorun',$oldNoAutorun),@('NoAutoplayfornonVolume',$oldNonVolume))) {
+    $props=Get-ItemProperty -Path $policyPath -Name $pair[0] -ErrorAction SilentlyContinue
+    $current=if($null -ne $props){$props.PSObject.Properties[$pair[0]].Value}else{$null}
+    if($current -ne $pair[1]){throw "Original $($pair[0]) policy was not restored"}
+  }
+}
 Check 'Later independent changes are preserved on OFF' {
   RunExe $helper '--on --quiet'
   Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value 128 -Type DWord
@@ -73,6 +81,7 @@ Check 'Later independent changes are preserved on OFF' {
   if((Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun).NoDriveTypeAutoRun -ne 128){throw 'Later external change overwritten'}
   if($null -eq $oldAutorun){Remove-ItemProperty $policyPath -Name NoDriveTypeAutoRun}else{Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value $oldAutorun -Type DWord}
 }
+Check 'Ephemeral inbound and intelligence rules install and rollback on disposable Windows host' { dotnet tests/OTS.Firewall79X.WindowsTests/bin/Release/net10.0-windows/OTS.Firewall79X.WindowsTests.dll --network-rule-probe; if($LASTEXITCODE -ne 0){throw 'Network firewall lifecycle verification failed'} }
 Check 'Existing firewall rules preserved' { AssertFirewallUnchanged after-off }
 Check 'Independent watchdog detects stopped primary and reports without UI' {
   Stop-Service OTSFirewall79X

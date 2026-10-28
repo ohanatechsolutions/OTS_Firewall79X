@@ -8,6 +8,40 @@ if(!OperatingSystem.IsWindows())return 2;
 bool admin=new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 try
 {
+    if(args.Contains("--network-rule-probe"))
+    {
+        // Never operate concurrently with the protection service. Runs only on
+        // disposable CI after OFF and the existing Windows firewall snapshot.
+        if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")
+            throw new Exception("Firewall lifecycle probe is allowed only on disposable CI");
+        if(!admin)throw new Exception("Firewall lifecycle probe requires administrator");
+        var current=await Ipc.SendAsync("status");
+        if(!current.Ok||current.Dashboard?.Enabled!=false)
+            throw new Exception("Firewall lifecycle probe refused while the OTS service is enabled");
+        var path=Path.Combine(Path.GetTempPath(),"ots-fw-lifecycle-"+Guid.NewGuid().ToString("N"));
+        var now=DateTimeOffset.UtcNow;
+        using(var guard=new TemporaryFirewallGuard(new EventStore(path)))
+        {
+            guard.Start();
+            if(!guard.Operational)throw new Exception("Windows firewall test guard unavailable: "+guard.Health);
+            for(int i=0;i<20;i++)guard.ObserveBlocked("8.8.8.8","%%14592",1000+i,now.AddMilliseconds(i));
+            if(guard.ActiveRules!=1)throw new Exception("Inbound WFP-source rule was not installed exactly once: "+guard.Health);
+            var inbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.InboundPrefix+"8.8.8.8").ToArray();
+            if(inbound.Length!=1||inbound[0].Direction!="1"||inbound[0].Action!="0"||inbound[0].RemoteAddresses!="8.8.8.8")
+                throw new Exception("Installed inbound Windows Firewall rule has incorrect direction, action or exact remote address");
+            if(!guard.BlockObservedIntelligence("1.1.1.1",now)||guard.IntelligenceRules!=1)
+                throw new Exception("Reactive outbound intelligence rule was not installed: "+guard.Health);
+            var outbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.OutboundPrefix+"1.1.1.1").ToArray();
+            if(outbound.Length!=1||outbound[0].Direction!="2"||outbound[0].Action!="0"||outbound[0].RemoteAddresses!="1.1.1.1")
+                throw new Exception("Installed outbound Windows Firewall rule has incorrect direction, action or exact destination");
+            guard.Sweep(now.AddMinutes(6),false);
+            if(guard.ActiveRules!=0||guard.IntelligenceRules!=0)
+                throw new Exception("Expired inbound/intelligence Windows Firewall rules not cleared: "+guard.Health);
+        }
+        var leftovers=new FirewallAudit().Read().Rules.Where(x=>TemporaryRuleIdentity.UsesReservedName(x.Name)).ToArray();
+        if(leftovers.Length>0)throw new Exception("OTS temporary rules remained after disposal");
+        return 0;
+    }
     if(args.Contains("--impostor"))
     {
         if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")throw new Exception("Impostor probe is restricted to disposable CI");
@@ -61,6 +95,26 @@ try
     Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/windows-observed-status.json",JsonSerializer.Serialize(status.Dashboard,new JsonSerializerOptions(Wire.Json){WriteIndented=true}));
     if(status.Dashboard.Protection!="Partially Protected"||status.Dashboard.BlockedEvents!=0)throw new Exception("Preview overstates protection or blocks");
     var applied=new WindowsSettings().Read(WindowsSettings.AutoRun);if(applied!="255")throw new Exception("Journaled hardening was not applied");
+    var windowsSettings=new WindowsSettings();
+    if(windowsSettings.Read(WindowsSettings.NoAutorun)!="1"||
+       windowsSettings.Read(WindowsSettings.NoAutoplayNonVolume)!="1")
+        throw new Exception("Extended hardening registry policy was not applied");
+    if(WindowsSettings.SafeHardeningKeys.Count!=3)
+        throw new Exception("Unexpected hardening allowlist mutation");
+    if(!SectionFAudits.IsManagementPort("[::]:5985")||
+       SectionFAudits.IsManagementPort("[::1]:443")||
+       SectionFAudits.NonLoopbackListener("[::1]:5985")||
+       !SectionFAudits.NonLoopbackListener("0.0.0.0:5985"))
+        throw new Exception("Management listener classification failed");
+    var hostEvidence=SectionFAudits.HostEvidence();
+    if(!hostEvidence.Contains("ASLR")||!hostEvidence.Contains("password policy",StringComparison.OrdinalIgnoreCase))
+        throw new Exception("Host hardening supplemental evidence missing");
+    var exposure=SectionFAudits.Exposure(new[]{"127.0.0.1:1234","0.0.0.0:5985"});
+    if(!exposure.Contains("1 on common management ports")||!exposure.Contains("NOT prove"))
+        throw new Exception("Local-vs-public exposure disclaimer missing");
+    var update=WindowsMissingUpdateAudit.Latest(out var updateState);
+    if(string.IsNullOrWhiteSpace(updateState))
+        throw new Exception("Missing-update audit does not expose provider status");
     var audit=HostHardeningAudit.Read();
     if(!audit.Summary.Contains("UAC=")||!audit.Summary.Contains("DEP=")||!audit.Summary.Contains("SMBv1"))throw new Exception("Hardening audit evidence missing");
     var integrity=status.Dashboard.Layers.Single(l=>l.Id==61);
@@ -69,15 +123,13 @@ try
     var hardware=SecurityDeviceAudit.Read();
     if(!hardware.Evidence.Contains("TPM:")||!hardware.Evidence.Contains("OS drive protection:"))
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
-    var policy=new TemporaryFirewallGuard(new EventStore(Path.Combine(Path.GetTempPath(),"ots-network-guard-ci-"+Guid.NewGuid().ToString("N"))));
-    policy.Start();
-    if(policy.BlockObservedIntelligence("127.0.0.1",DateTimeOffset.UtcNow) ||
-       policy.BlockObservedIntelligence("192.0.2.10",DateTimeOffset.UtcNow) ||
-       policy.BlockObservedIntelligence("::ffff:8.8.8.8",DateTimeOffset.UtcNow))
-       throw new Exception("Invalid intelligence destination passed allowlist");
-    if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
-    if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
-    policy.Dispose();
+    // Do not create a second guard here: starting it would sweep the live OTS
+    // service's owned temporary restrictions and alter enforcement during CI.
+    if(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","10.1.2.3","445","8.8.8.8","50544","6",out var blockedProbe)
+       || blockedProbe?.RemoteAddress!="8.8.8.8"||blockedProbe.LocalPort!=445)
+       throw new Exception("WFP event endpoint roles are wrong");
+    var firewallSnapshot=new FirewallAudit().Read();
+    if(firewallSnapshot.Rules.Count<0)throw new Exception("Firewall snapshot missing");
     var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))

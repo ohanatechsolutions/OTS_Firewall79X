@@ -47,11 +47,7 @@ public sealed class Engine : IDisposable
                     case "pause":Disable(DateTimeOffset.UtcNow.AddMinutes(15));return new(true,"Paused for 15 minutes");
                     case "restore":Disable(null);return new(true,"Restoration completed; external changes were preserved");
                     case "report":return new(true,Reports.Generate(cached));
-                    case "selftest":return new(Catalog.All.Count==79&&journal.Entries.All(e=>e.Key==WindowsSettings.AutoRun),"Catalog and journal schema verified; this is not a full protection regression test");
-                    case "domains-on":
-                        if(!enabled)return new(false,"Turn on OTS monitoring before enabling optional domain blocking");
-                        domainHosts.Enable(domainFeed.Active);return new(true,domainHosts.Status);
-                    case "domains-off":domainHosts.Restore();return new(true,"Optional domain blocking removed; other hosts entries preserved");
+                    case "selftest":return new(Catalog.All.Count==79&&journal.Entries.All(e=>WindowsSettings.SafeHardeningKeys.Contains(e.Key)),"Catalog and journal schema verified; this is not a full protection regression test");
                     default:return new(false,"Unsupported command");
                 }
             }
@@ -61,14 +57,14 @@ public sealed class Engine : IDisposable
     private void Enable()
     {
         if(enabled)return;
-        AtomicFile.Write(Paths.At("pre-activation.json"),JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,AutoRun=settings.Read(WindowsSettings.AutoRun)},Wire.Json));
+        AtomicFile.Write(Paths.At("pre-activation.json"),JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,AutoRun=settings.Read(WindowsSettings.AutoRun),NoAutorun=settings.Read(WindowsSettings.NoAutorun),NonVolumeAutoPlay=settings.Read(WindowsSettings.NoAutoplayNonVolume)},Wire.Json));
         try
         {
-            journal.Apply(WindowsSettings.AutoRun,"255");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;deception=new(events);sensors=new(events,networkGuard){Deception=deception,Domains=domainFeed};sensors.Start();checks.Sensors=sensors;
+            journal.Apply(WindowsSettings.AutoRun,"255");journal.Apply(WindowsSettings.NoAutorun,"1");journal.Apply(WindowsSettings.NoAutoplayNonVolume,"1");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;deception=new(events);sensors=new(events,networkGuard){Deception=deception,Domains=domainFeed};sensors.Start();checks.Sensors=sensors;
             hostMonitor=new(events);checks.HostMonitor=hostMonitor;
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
-            events.Add(47,"Info","Protection activated","Narrow AutoRun hardening applied with rollback; system firewall policy preserved");
+            events.Add(47,"Info","Protection activated","Three allowlisted AutoRun/AutoPlay settings journaled with rollback; existing firewall policy preserved");
         }
         catch{enabled=false;hostMonitor?.Dispose();hostMonitor=null;checks.HostMonitor=null;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;journal.Restore();throw;}
     }

@@ -29,6 +29,74 @@ Test("Port scan requires diverse ports",()=>{Assert(!Detections.Scan(Enumerable.
 Test("Beacon regularity requires enough observations",()=>{var now=DateTimeOffset.UtcNow;Assert(!Detections.IsBeacon([now,now.AddMinutes(1)]));Assert(Detections.IsBeacon(Enumerable.Range(0,10).Select(i=>now.AddMinutes(i)).ToArray()));Assert(!Detections.IsBeacon(Enumerable.Range(0,10).Select(i=>now.AddMinutes(i*i)).ToArray()));});
 Test("File burst ignores older events",()=>{var now=DateTimeOffset.UtcNow;Assert(!Detections.FileBurst(Enumerable.Repeat(now.AddMinutes(-1),100),now));Assert(Detections.FileBurst(Enumerable.Repeat(now,40),now));});
 Test("Execution detector does not flag ordinary shell invocation",()=>{Assert(Detections.ExecutionIndicator("powershell.exe","Get-Date")==null);Assert(Detections.ExecutionIndicator("powershell.exe","-EncodedCommand AAAA")!=null);});
+Test("Secrets scanner categorizes without retaining raw secret",()=>{
+    var token="ghp_"+new string('A',36);
+    var aws="AKIA"+new string('A',16);
+    var detected=Detections.SecretKinds("token="+token+"\nAWS="+aws+"\n-----BEGIN OPENSSH PRIVATE KEY-----");
+    Assert(detected.Count>=3&&detected.Any(x=>x.Contains("GitHub"))&&detected.Any(x=>x.Contains("AWS"))&&detected.Contains("Private key"));
+    Assert(!string.Join("|",detected).Contains(token)&&!string.Join("|",detected).Contains(aws));
+});
+Test("Secrets scanner rejects binary data and misleading placeholders",()=>{
+    Assert(Detections.SecretKinds("binary\0ghp_"+new string('A',36)).Count==0);
+    Assert(Detections.SecretKinds("password=REDACTED\nclient_secret=example").Count==0);
+    Throws<ArgumentOutOfRangeException>(()=>Detections.SecretKinds(new string('x',1024*1024+1)));
+});
+Test("Three-setting journal restores unchanged settings and preserves later edits",()=>{
+    var values=new Dictionary<string,string?>{{"autorun","0"},{"command",null},{"autoplay","0"}};
+    var store=new DictionaryStore(values);var j=new ChangeJournal(Temp(),store);
+    j.Apply("autorun","255");j.Apply("command","1");j.Apply("autoplay","1");
+    values["autoplay"]="third-party";
+    Assert(j.Restore().SequenceEqual(new[]{"autoplay"}));
+    Assert(values["autorun"]=="0"&&values["command"]==null&&values["autoplay"]=="third-party");
+});
+Test("Browser manifest flags high impact debugger, wildcard and proxy permissions",()=>{
+    using var debugger=JsonDocument.Parse("{\"permissions\":[\"debugger\"]}");
+    using var proxy=JsonDocument.Parse("{\"optional_permissions\":[\"proxy\"]}");
+    using var hosts=JsonDocument.Parse("{\"host_permissions\":[\"<all_urls>\"]}");
+    Assert(Detections.BrowserManifestHasHighImpactPermissions(debugger.RootElement));
+    Assert(Detections.BrowserManifestHasHighImpactPermissions(proxy.RootElement));
+    Assert(Detections.BrowserManifestHasHighImpactPermissions(hosts.RootElement));
+});
+Test("Browser manifest avoids false malware verdict on ordinary permissions",()=>{
+    using var ordinary=JsonDocument.Parse("{\"permissions\":[\"storage\",\"alarms\"],\"host_permissions\":[\"https://example.com/*\"]}");
+    using var wrongType=JsonDocument.Parse("{\"permissions\":\"debugger\"}");
+    using var array=JsonDocument.Parse("[\"debugger\"]");
+    Assert(!Detections.BrowserManifestHasHighImpactPermissions(ordinary.RootElement));
+    Assert(!Detections.BrowserManifestHasHighImpactPermissions(wrongType.RootElement));
+    Assert(!Detections.BrowserManifestHasHighImpactPermissions(array.RootElement));
+});
+Test("NuGet lockfile produces exact validated versions, deduplicated across target frameworks",()=>{
+    const string json="""{"version":1,"dependencies":{"net10.0":{"Example.Package":{"type":"Direct","resolved":"1.2.3"},"Other.Lib":{"type":"Transitive","resolved":"4.5.6-beta.2"}},"net10.0-windows":{"Example.Package":{"type":"Direct","resolved":"1.2.3"}}}}""";
+    var packages=NuGetLockParser.Parse(json);
+    Assert(packages.Count==2);
+    Assert(packages.Any(p=>p.Name=="Example.Package"&&p.Version=="1.2.3"));
+    Assert(packages.Any(p=>p.Name=="Other.Lib"&&p.Version=="4.5.6-beta.2"));
+});
+Test("NuGet lockfile refuses malformed, unversioned or invalid package identifiers",()=>{
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("{}"));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"Library":{"type":"Project"}}}}"""));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"bad/package":{"resolved":"1.2.3"}}}}"""));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"name":{"resolved":"../secret"}}}}"""));
+    Throws<InvalidDataException>(()=>NuGetLockParser.Parse(new string('a',1024*1024+1)));
+});
+Test("OSV batch parser correctly attributes exact NuGet package advisory IDs",()=>{
+    NuGetLockParser.Package[] packages=[new("Package.A","1.2.3"),new("Package.B","2.0.0")];
+    var parsed=OsvBatchValidator.Parse("""{"results":[{"vulns":[{"id":"GHSA-abcd-1234-5678"},{"id":"CVE-2025-12345"}]},{}]}""",packages);
+    Assert(parsed.Queried==2&&parsed.PackagesAffected==1&&parsed.AdvisoryCount==2&&parsed.Complete);
+    Assert(parsed.Findings.Single().Name=="Package.A");
+});
+Test("OSV parser refuses mismatched, malformed or unbounded untrusted results",()=>{
+    NuGetLockParser.Package[] packages=[new("Package.A","1.2.3")];
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse("""{"results":[]}""",packages));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse("""{"results":[{"vulns":"not an array"}]}""",packages));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse("""{"results":[{"vulns":[{"id":"../../bad"}]}]}""",packages));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse(new string('x',1024*1024+1),packages));
+});
+Test("OSV result pagination is incomplete, never certified as fully checked",()=>{
+    NuGetLockParser.Package[] packages=[new("Package.A","1.2.3")];
+    var parsed=OsvBatchValidator.Parse("""{"results":[{"next_page_token":"future","vulns":[]}]}""",packages);
+    Assert(!parsed.Complete&&parsed.Findings.Single().NeedsAnotherPage&&parsed.AdvisoryCount==0);
+});
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
@@ -346,6 +414,54 @@ Test("Section D execution indicators require suspicious command or parent lineag
     Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
     Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
 });
+Test("WFP 5157 endpoint roles use remote DestAddress and local SourcePort",()=>{
+    Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","6",out var evt));
+    Assert(evt!=null&&evt.RemoteAddress=="8.8.8.8"&&evt.LocalPort==445&&evt.RemotePort==50420);
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14593","192.168.1.10","445","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","17",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","0","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","127.0.0.1","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","0.0.0.0","445","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","203.0.113.7","50420","6",out _));
+    Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","2001:db8::10","3389","2606:4700:4700::1111","52880","6",out var v6)&&v6?.LocalPort==3389);
+});
+Test("Temporary firewall ownership requires exact structured fields, not name prefix alone",()=>{
+    const string src="8.8.4.4";
+    var name=TemporaryRuleIdentity.InboundPrefix+src;
+    Assert(TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,"someone else's rule",TemporaryRuleIdentity.Group,src,1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,"*",1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,2,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(TemporaryRuleIdentity.InboundPrefix+"192.168.1.1",TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,"192.168.1.1",1,0,256));
+    Assert(TemporaryRuleIdentity.IsOwned(TemporaryRuleIdentity.OutboundPrefix+src,TemporaryRuleIdentity.Marker+"intelligence",TemporaryRuleIdentity.Group,src,2,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(TemporaryRuleIdentity.OutboundPrefix+src,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,2,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned("Unrelated firewall rule",TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,1,0,256));
+});
+Test("IPv4/IPv6 packet parser fails closed on malformed headers, not truncated captures",()=>{
+    byte[] ipv4=new byte[40];
+    ipv4[0]=0x45;ipv4[2]=0;ipv4[3]=40;ipv4[8]=64;ipv4[9]=6;
+    ipv4[12]=192;ipv4[13]=0;ipv4[14]=2;ipv4[15]=1;
+    ipv4[16]=198;ipv4[17]=51;ipv4[18]=100;ipv4[19]=1;
+    ipv4[32]=0x50;
+    uint sum=0;for(int i=0;i<20;i+=2)sum+=(uint)((ipv4[i]<<8)|ipv4[i+1]);
+    while((sum>>16)!=0)sum=(sum&65535)+(sum>>16);
+    ushort checksum=(ushort)~sum;ipv4[10]=(byte)(checksum>>8);ipv4[11]=(byte)checksum;
+    Assert(IpPacketValidator.Inspect(ipv4).Status==IpPacketValidator.Verdict.Valid);
+    var truncated=ipv4.AsSpan(0,28).ToArray();
+    Assert(IpPacketValidator.Inspect(truncated).Status==IpPacketValidator.Verdict.Unsupported);
+    var broken=(byte[])ipv4.Clone();broken[8]=63;
+    Assert(IpPacketValidator.Inspect(broken).Status==IpPacketValidator.Verdict.Malformed);
+    broken=(byte[])ipv4.Clone();broken[6]=0xE0;
+    Assert(IpPacketValidator.Inspect(broken).Status==IpPacketValidator.Verdict.Malformed);
+    byte[] ipv6=new byte[48];ipv6[0]=0x60;ipv6[4]=0;ipv6[5]=8;ipv6[6]=17;ipv6[7]=64;ipv6[44]=0;ipv6[45]=8;
+    Assert(IpPacketValidator.Inspect(ipv6).Status==IpPacketValidator.Verdict.Valid);
+    ipv6[45]=9;Assert(IpPacketValidator.Inspect(ipv6).Status==IpPacketValidator.Verdict.Malformed);
+    ipv6[45]=8;ipv6[6]=50;Assert(IpPacketValidator.Inspect(ipv6).Status==IpPacketValidator.Verdict.Unsupported);
+    byte[] fragmented=new byte[48];fragmented[0]=0x60;fragmented[5]=8;fragmented[6]=44;fragmented[40]=59;
+    Assert(IpPacketValidator.Inspect(fragmented).Status==IpPacketValidator.Verdict.Valid);
+    fragmented[42]=0;fragmented[43]=2;
+    Assert(IpPacketValidator.Inspect(fragmented).Status==IpPacketValidator.Verdict.Malformed);
+});
 Test("Canary DNS comparison requires exact generated name and ignores DNS case/trailing dot",()=>{
     const string expected="ots-0123456789abcdef0123456789abcdef.invalid";
     Assert(DeceptionRules.IsGeneratedCanaryDnsName(expected));
@@ -424,3 +540,9 @@ Test("Beacon detector demands sufficient regularity and suppresses expected back
 });
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
+
+sealed class DictionaryStore(Dictionary<string,string?> values):ISettingStore
+{
+    public string? Read(string key)=>values.GetValueOrDefault(key);
+    public void Write(string key,string? value)=>values[key]=value;
+}
