@@ -173,13 +173,30 @@ public sealed class LayerChecks
                 return Good(id,"Trust-store and installed-software changes observed",LayerMode.Auditing,"Does not validate package repository metadata or every software update source.");
             case 40:
                 var container=SystemQueries.Wmi("root\\cimv2","SELECT Name,State FROM Win32_Service WHERE Name='docker' OR Name='com.docker.service' OR Name='containerd'","Name","State");
-                if(container.Count==0)return Na(id,"No recognized local container service installed");
-                bool exposed=Connections.Any(c=>c.State=="Listening"&&c.Local.EndsWith(":2375"));return exposed?Bad(id,"Unencrypted Docker management port 2375 is listening","Local socket observation; container filesystem permissions and publish rules are not inspected."):Good(id,"No TCP 2375 listener observed",LayerMode.Auditing,"Container inventory, Unix sockets, and per-container permissions are not inspected.");
+                if(NetworkError!=null)return Missing(id,"Container management listener inspection unavailable: "+NetworkError);
+                var endpoints=ContainerManagementAudit.Analyze(Connections.Where(c=>c.State=="Listening").Select(c=>c.Local),container.Count>0);
+                if(endpoints.PlaintextCandidates>0)
+                {
+                    events.Add(id,"High","Potential unauthenticated container-management endpoint",
+                        $"TCP 2375 listening on {endpoints.PlaintextCandidates} addresses; {endpoints.RemotePlaintextCandidates} non-loopback. Confirm listener process, TLS and firewall accessibility.");
+                    return Bad(id,$"Possible plaintext container API: {endpoints.PlaintextCandidates} TCP 2375 listeners; {endpoints.RemotePlaintextCandidates} non-loopback addresses",
+                        "Port-based observation, not definitive Docker identification. Even loopback APIs can be unsafe. No socket probe, policy change or block performed.");
+                }
+                if(!endpoints.ObservedAnyDockerService&&endpoints.TlsCandidates==0)return Na(id,"No recognized Docker/containerd service or common 2375/2376 management listener detected; WSL/remote engines not assessed");
+                return Good(id,$"{container.Count} container service records; {endpoints.TlsCandidates} possible TLS management listeners (TCP 2376); no TCP 2375 detected",
+                    LayerMode.Auditing,"TCP 2376 does not prove TLS or certificate verification. Container privilege, bind mounts, WSL2 port forwarding and service pipe ACLs require additional checks.");
             case 41:return Channel(id,"Security","Alerts on eight failed logins per source in two minutes; automatic source bans withheld to avoid lockout.");
             case 42:
-                var config=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ssh","sshd_config");if(!File.Exists(config))return Na(id,"No OpenSSH server configuration found");
-                var lines=File.ReadAllLines(config).Select(s=>s.Trim()).Where(s=>s.Length>0&&!s.StartsWith('#')).ToArray();
-                bool pass=lines.Any(s=>s.Equals("PasswordAuthentication no",StringComparison.OrdinalIgnoreCase));return pass?Good(id,"Explicit PasswordAuthentication no found",LayerMode.Auditing,"Report-only; Include and Match blocks require effective-configuration review; key ACL audit incomplete."):Bad(id,"PasswordAuthentication no is not explicit","OpenSSH defaults, Include and Match can affect actual behavior; no configuration changed.");
+                var config=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ssh","sshd_config");
+                if(!File.Exists(config))return Na(id,"Default Windows sshd_config not found; custom -f configuration, OpenSSH service state and listening endpoints require separate verification");
+                if(new FileInfo(config).Length>256*1024)return Missing(id,"OpenSSH configuration exceeds bounded review size");
+                var ssh=OpenSshPolicyAudit.Parse(File.ReadAllText(config));
+                var info=$"Global sshd directives: password authentication={ssh.PasswordAuthentication?.ToString()??"unspecified"}, public-key authentication={ssh.PublicKeyAuthentication?.ToString()??"unspecified"}, empty passwords={ssh.PermitEmptyPasswords?.ToString()??"unspecified"}, Include/Match={ssh.RequiresEffectiveVerification}";
+                if(ssh.ExplicitWeakness)return Bad(id,info+"; explicitly permissive global authentication directive detected",
+                    "OpenSSH's effective -T output, includes, Match contexts, startup -f settings and key-file ACLs have not been verified.");
+                return ssh.ExplicitlyHardened
+                    ?Good(id,info,LayerMode.Auditing,"Global configuration is explicitly restrictive, but effective -T settings, service arguments, key ACLs and port exposure still need independent verification.")
+                    :Missing(id,info+"; insufficient evidence to claim SSH is hardened. Conditional Include/Match settings and defaults require an effective sshd -T audit.");
             case 43:return new(id,LayerMode.Idle,false,"Optional password check is available in the desktop interface; no password provided","Uses SHA-1 range queries only when requested; plaintext is never uploaded.");
             case 44:
                 var accounts=SystemQueries.Wmi("root\\cimv2","SELECT Name,Disabled,PasswordRequired FROM Win32_UserAccount WHERE LocalAccount=True","Name","Disabled","PasswordRequired");int weak=accounts.Count(a=>a["Disabled"]=="False"&&a["PasswordRequired"]=="False");Changed(id,"Local account state",accounts);return weak>0?Bad(id,$"{weak} enabled accounts do not require passwords", "Account policy flags do not establish actual password strength or staleness."):Good(id,$"{accounts.Count} local accounts audited",LayerMode.Auditing,"Does not inspect password contents, domain policies, or account staleness.");

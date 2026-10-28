@@ -108,3 +108,9 @@ Layer 5 now compares sampled established TCP destinations with a strictly valida
 ## Follow-up — DNS observation and screen fit
 
 Layer 8 now watches actual Windows DNS Client Event 3008 results where the event channel is enabled, tracking suspicious public-to-local address transitions in a bounded privacy-preserving cache. This is an **alert-only heuristic**, not DNS blocking; channel absence and unobserved responses remain unavailable. Window startup dimensions now adapt to the Windows working area so the dashboard fits smaller laptop displays. Neither addition meets a complete production security acceptance gate.
+
+
+## Extended host audits — SSH and Docker exposure (2026-10-27)
+
+- **Layer 40:** Windows TCP listeners for common container API ports 2375/2376 are classified for local-only vs network bindings, and a possible plaintext management endpoint produces an alert; no remote connection or firewall modification is attempted. This remains a partial exposure audit.
+- **Layer 42:** Windows OpenSSH global sshd_config settings now use first-value parsing and explicitly refuse hardening claims where Include, Match, missing or unknown directives could affect effective settings. No SSH settings are modified. Effective sshd -T, authentication method behavior and authorized-key ACLs still need verification.
