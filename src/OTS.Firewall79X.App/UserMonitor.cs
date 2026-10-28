@@ -113,7 +113,6 @@ internal sealed class UserMonitor : IDisposable
                 catch(Exception ex)when(ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
                 {currentUserScreenLock="Current-user screen-lock configuration unavailable: "+ex.GetType().Name;}
             }
-        {
             var text=BoundedClipboard.ReadAddressCandidate();
             if(text!=null)
             {

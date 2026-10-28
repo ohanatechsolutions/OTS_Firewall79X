@@ -416,3 +416,9 @@ Test("Section D execution indicators require suspicious command or parent lineag
 });
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
+
+sealed class DictionaryStore(Dictionary<string,string?> values):ISettingStore
+{
+    public string? Read(string key)=>values.GetValueOrDefault(key);
+    public void Write(string key,string? value)=>values[key]=value;
+}
