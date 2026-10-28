@@ -199,17 +199,30 @@ public sealed class Engine : IDisposable
             case 57:return new(id,LayerMode.Unavailable,false,"Pinned ECDSA signed-manifest verification is implemented but automatic trusted updates remain disabled until a publisher key and signed release are provisioned","Hash-only or unsigned downloads are not accepted as an authenticated software update. No executable dependencies download at launch.");
             case 58:return File.Exists(Path.Combine(AppContext.BaseDirectory,"SBOM.json"))?Good("Installed package includes a build SBOM",LayerMode.Auditing,"SBOM presence is inventory evidence, not an independent integrity or vulnerability guarantee."):new(id,LayerMode.Unavailable,false,"Build SBOM not present beside service");
             case 59:
-                var active=journal.Entries.Where(e=>e.State=="applied").ToArray();bool intact=active.All(e=>settings.Read(e.Key)==e.Applied);
-                return intact?Good($"{active.Length} journaled settings still match OTS-applied values",LayerMode.Monitoring):new(id,LayerMode.Auditing,false,"An owned setting changed externally; it will be preserved on restore");
-            case 60:return Good("Severity-labelled, deduplicated event history connected to dashboard",limit:"Desktop notifications require the running interactive application; external messaging is not configured.");
+                var active=journal.Entries.Where(e=>e.State=="applied").ToArray();
+                bool intact=active.All(e=>settings.Read(e.Key)==e.Applied);
+                bool firewallSafe=networkGuard?.Operational==true &&
+                    !networkGuard.Health.Contains("preserved",StringComparison.OrdinalIgnoreCase) &&
+                    !networkGuard.Health.Contains("failed",StringComparison.OrdinalIgnoreCase);
+                return intact&&firewallSafe
+                    ?Good($"{active.Length} journaled settings match OTS-owned values; temporary firewall guard verifies exact rule properties before cleanup",LayerMode.Monitoring,
+                        "Third-party rule changes are preserved rather than forcefully reverted; full WFP policy precedence and external rule ownership require further audit.")
+                    :new(id,LayerMode.Auditing,false,
+                        $"Rule safety requires attention: journal matched={intact}; guard={networkGuard?.Health??"unavailable"}",
+                        "No broad rollback is attempted against unknown or modified firewall rules.");
+            case 60:return Good("Bounded event history persists without the WPF UI; high-severity incidents also attempt Windows Application Event Log delivery",
+                limit:"Desktop notifications require an interactive session. Off-device delivery, disk-full and native Event Log reliability testing remain incomplete.");
             case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging or integrity degraded: "+events.LastError,"Stored logs require administrator review; in-memory events are bounded.");
                 return events.LegacyChainGaps>0
                     ?new(id,LayerMode.Auditing,false,$"{events.VerifiedRetainedEvents} authenticated records; {events.LegacyChainGaps} gaps in retained history", "Historical continuity cannot be established; protected event log inspection recommended.")
                     :Good($"HMAC-authenticated retained log entries: {events.VerifiedRetainedEvents}; historical counters restored on restart",limit:"Encrypted DPAPI integrity key is machine-local; finite retention and local administrator control remain trust limitations.");
             case 62:return Good($"Measured resource governor: {governor.CycleInterval.TotalSeconds:0}s cycle, {governor.InventoryInterval.TotalMinutes:0}m inventory. {governor.Reason}",limit:"Low disk defers optional snapshots and quarterly reports; urgent event logging remains enabled. Full battery, memory, and disk stress qualification still required.");
             case 63:return feed.Active is { } intel
-                ?Good($"Official Feodo C2 IP source timestamp {intel.UpdatedUtc:O}; {intel.Addresses.Count} current indicators",LayerMode.Monitoring,"HTTPS transport and dated source are verified, but the feed is not cryptographically signed. Domain feeds and ruleset validation remain missing.")
-                :new(id,LayerMode.Unavailable,false,feed.Summary,"No stale or unverified indicators are used. No blocking policies are installed.");
+                ?new(id,LayerMode.Auditing,false,
+                    $"Feodo HTTPS publication timestamp {intel.UpdatedUtc:O} is within the freshness window; {intel.Addresses.Count} parsed indicators; publisher signature is NOT verified",
+                    "HTTPS and a source timestamp are not a cryptographic feed signature. Observed matches may trigger temporary rules under other layers; broader authenticated feed coverage remains incomplete.")
+                :new(id,LayerMode.Unavailable,false,feed.Summary,
+                    "No valid current feed available. Previous intelligence-based rules are removed during normal maintenance; independent signed feed authenticity is not configured.");
             case 64:return Good("Log-integrity key is encrypted by machine DPAPI in administrator/SYSTEM-only storage",LayerMode.Enforcing,"Local administrators remain trusted; DPAPI is not off-device protection.");
             case 66:return Good("High-severity events request a protected JSON snapshot on the next completed health cycle",LayerMode.Monitoring,"Preserves available layer health, recent events and process-associated TCP metadata; bounded to 10 snapshots. No full memory dump or guaranteed capture after abrupt power loss.");
             case 67:return Good("Weighted capability-health score; unavailable/idle layers receive zero; not-applicable layers excluded",LayerMode.Auditing,"Score measures declared checks, not immunity or independently measured security effectiveness.");

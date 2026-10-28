@@ -490,6 +490,64 @@ Test("Beacon detector demands sufficient regularity and suppresses expected back
     Assert(!BeaconAnalysis.Suspicious("unknown-app",Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*i*65)).ToArray()));
     Assert(!BeaconAnalysis.Suspicious("unknown-app",Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*10)).ToArray()));
 });
+Test("Section G: exact owned-rule identities never delete drifted or lookalike policies",()=>{
+    const string prefix=OwnedFirewallRule.InboundPrefix;
+    const string intel=OwnedFirewallRule.IntelligencePrefix;
+    bool Mine(string name,string description,string remote,int direction=1,int action=0,int protocol=256,
+        int profiles=int.MaxValue,bool enabled=true)=>
+        OwnedFirewallRule.Matches(name,description,remote,direction,action,protocol,profiles,enabled);
+    Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8"));
+    Assert(Mine(intel+"1.1.1.1",OwnedFirewallRule.IntelligenceDescription,"1.1.1.1",2));
+    Assert(!Mine(prefix+"8.8.8.8","modified by third party","8.8.8.8"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",2));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,1));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,0,6));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,0,256,1));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",1,0,256,int.MaxValue,false));
+    Assert(!Mine(intel+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8",2));
+    Assert(!Mine(intel+"2606:4700:4700::1111",OwnedFirewallRule.IntelligenceDescription,"2606:4700:4700::1111",2));
+    foreach(var address in new[]{"127.0.0.1","10.0.0.1","192.0.2.10","::1","not-an-ip","8.8.8.8,1.1.1.1","8.8.8.8/32"})
+        Assert(!Mine(prefix+address,OwnedFirewallRule.InboundDescription,address));
+    var random=new Random(79);
+    for(int i=0;i<3000;i++)
+    {
+        var chars=new char[random.Next(0,95)];
+        for(int j=0;j<chars.Length;j++)chars[j]=(char)random.Next(1,128);
+        string name=prefix+new string(chars);
+        // Unknown name/address must never be treated as an OTS-created rule.
+        if(!name.Equals(prefix+"8.8.8.8",StringComparison.Ordinal))
+            Assert(!Mine(name,OwnedFirewallRule.InboundDescription,"8.8.8.8"));
+    }
+});
+Test("Canary DNS comparison requires exact generated name and ignores DNS case/trailing dot",()=>{
+    const string expected="ots-0123456789abcdef0123456789abcdef.invalid";
+    Assert(DeceptionRules.IsGeneratedCanaryDnsName(expected));
+    Assert(DeceptionRules.IsCanaryDnsQuery(expected.ToUpperInvariant()+".",expected));
+    Assert(!DeceptionRules.IsCanaryDnsQuery("other."+expected,expected));
+    Assert(!DeceptionRules.IsCanaryDnsQuery("not-a-canary.invalid",expected));
+    Assert(!DeceptionRules.IsGeneratedCanaryDnsName("ots-not-random.invalid"));
+});
+Test("HTTP canary requires exact GET or HEAD path with bounded single-line syntax",()=>{
+    var path="/canary/0123456789abcdef0123456789abcdef";
+    Assert(DeceptionRules.IsCanaryHttpRequest("GET "+path+" HTTP/1.1",path));
+    Assert(DeceptionRules.IsCanaryHttpRequest("HEAD "+path+" HTTP/1.0",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest("POST "+path+" HTTP/1.1",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest("GET "+path+"/extra HTTP/1.1",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest("GET http://remote.test"+path+" HTTP/1.1",path));
+    Assert(!DeceptionRules.IsCanaryHttpRequest(new string('X',1000),path));
+});
+Test("Audited canary file access requires exact 4663 object identity and rights",()=>{
+    const string file=@"C:\ProgramData\OTS\canaries\decoy.txt";
+    var read=DeceptionRules.ClassifyFileAudit("File",file,file,"0x1");
+    Assert(read.Read&&!read.Changed);
+    Assert(DeceptionRules.ClassifyFileAudit("File",file,file,"0x2").Changed);
+    Assert(DeceptionRules.ClassifyFileAudit("File",file,file,"0x10000").Changed);
+    Assert(!DeceptionRules.ClassifyFileAudit("File",file+"-other",file,"0x1").Read);
+    Assert(!DeceptionRules.ClassifyFileAudit("Key",file,file,"0x1").Read);
+    Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"bad").Read);
+    Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"0x80").Read);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 
