@@ -15,7 +15,7 @@ public partial class MainWindow : Window
 {
     private sealed record Row(int Id,string Name,string Category,string Mode,string Health,string Evidence,double? Duration);
     private DesktopNotifications? notifications;private DateTimeOffset lastAlert=DateTimeOffset.UtcNow,lastNotification=DateTimeOffset.MinValue;
-    private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private readonly DispatcherTimer timer;private bool ready;
+    private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private ExternalExposureAudit.Result? exposureResult;private PackageVulnerabilityAudit.Result? nugetAuditResult;private readonly DispatcherTimer timer;private bool ready;
     private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
     public MainWindow()
     {
@@ -46,8 +46,29 @@ public partial class MainWindow : Window
             if(!dashboard.Enabled&&userMonitor!=null){userMonitor.Dispose();userMonitor=null;}
             if(userMonitor!=null)
             {
-                var overlay=userMonitor.Results().ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>overlay.GetValueOrDefault(l.Id,l)).ToList();var score=Posture.Calculate(layers,dashboard.Enabled);
+                var overlay=userMonitor.Results().ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>
+                {
+                    if(!overlay.TryGetValue(l.Id,out var user))return l;
+                    if(l.Id!=46)return user;
+                    return l with{Evidence=l.Evidence+"; "+user.Evidence,
+                        Limitation=l.Limitation+"; "+user.Limitation,
+                        Healthy=false};
+                }).ToList();var score=Posture.Calculate(layers,dashboard.Enabled);
                 dashboard=dashboard with{Layers=layers,Score=score.Score,Confidence=score.Confidence,Events=dashboard.Events.Concat(userMonitor.Events()).OrderByDescending(e=>e.Time).Take(300).ToList()};
+            }
+            if(exposureResult is { } evidence&&DateTimeOffset.UtcNow-evidence.ObservedAt<TimeSpan.FromHours(1))
+            {
+                dashboard=dashboard with{Layers=dashboard.Layers.Select(l=>l.Id==49
+                    ?l with{Evidence=l.Evidence+"; "+evidence.Evidence,
+                             Limitation=l.Limitation+"; "+evidence.Limitation}
+                    :l).ToList()};
+            }
+            if(nugetAuditResult is { } osv&&dashboard.Enabled)
+            {
+                dashboard=dashboard with{Layers=dashboard.Layers.Select(l=>l.Id==52
+                    ?l with{Evidence=l.Evidence+"; "+osv.Evidence,
+                             Limitation=l.Limitation+"; "+osv.Limitation}
+                    :l).ToList()};
             }
             ProtectionText.Text=stale?"Protection status stale — service health requires attention":dashboard.Protection;
             Toggle.Content=dashboard.Enabled?"Turn OFF":"Turn ON";ScoreText.Text=stale?"Unknown":$"{dashboard.Score} / 100";ConfidenceText.Text=$"Observed data: {dashboard.Confidence:F1}%";
@@ -99,6 +120,57 @@ public partial class MainWindow : Window
         var report=Report();if(report==null){MessageBox.Show("No service report available yet.");return;}
         var save=new SaveFileDialog{Filter="Markdown report|*.md",FileName=$"OTS-Firewall79X-Report-{DateTime.Now:yyyyMMdd}.md"};if(save.ShowDialog()==true)try{File.WriteAllText(save.FileName,report);StatusLine.Text="Report saved.";}catch(Exception ex){MessageBox.Show(ex.Message);}
     }
+    private async void ExternalExposureClick(object sender,RoutedEventArgs e)
+    {
+        const string notice="This optional lookup discloses your current public IPv4 address to api4.ipify.org and Shodan InternetDB. The external provider may retain the request. Its previously observed ports are NOT a live or complete scan, and a missing record does NOT prove safety. Continue?";
+        if(MessageBox.Show(notice,"Optional external exposure intelligence",MessageBoxButton.YesNo,MessageBoxImage.Information)!=MessageBoxResult.Yes)
+            return;
+        if(sender is System.Windows.Controls.Button button)button.IsEnabled=false;
+        try
+        {
+            ExternalExposureResult.Text="Checking outside-observed historical port intelligence…";
+            using var ct=new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            exposureResult=await ExternalExposureAudit.LookupAsync(http,ct.Token);
+            ExternalExposureResult.Text=exposureResult.Evidence+" "+exposureResult.Limitation;
+            await Refresh();
+        }
+        catch(Exception ex)
+        {
+            exposureResult=null;
+            ExternalExposureResult.Text="External lookup unavailable: "+ex.GetType().Name+
+                ". Local listeners do not demonstrate external reachability. No safety conclusion can be drawn.";
+        }
+        finally {if(sender is System.Windows.Controls.Button restoreButton)restoreButton.IsEnabled=true;}
+    }
+    private async void NuGetAdvisoryClick(object sender,RoutedEventArgs e)
+    {
+        var select=new OpenFileDialog
+        {
+            Title="Select a NuGet packages.lock.json that you authorize OTS to inspect",
+            Filter="NuGet lockfiles (packages.lock.json)|packages.lock.json",
+            Multiselect=false
+        };
+        if(select.ShowDialog()!=true)return;
+        const string notice="This check reads the selected NuGet packages.lock.json and sends package names and exact resolved versions to the public OSV.dev vulnerability API. No source code, credentials or local file paths are transmitted. Published advisory results may be incomplete and cannot prove the software is safe. Continue?";
+        if(MessageBox.Show(notice,"Optional NuGet vulnerability intelligence",MessageBoxButton.YesNo,MessageBoxImage.Information)!=MessageBoxResult.Yes)
+            return;
+        if(sender is Button action)action.IsEnabled=false;
+        try
+        {
+            NuGetAdvisoryResult.Text="Checking exact NuGet package versions against published OSV advisories…";
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            nugetAuditResult=await PackageVulnerabilityAudit.QueryAsync(http,select.FileName,timeout.Token);
+            NuGetAdvisoryResult.Text=nugetAuditResult.Evidence+" "+nugetAuditResult.Limitation;
+            await Refresh();
+        }
+        catch(Exception ex)
+        {
+            nugetAuditResult=null;
+            NuGetAdvisoryResult.Text="NuGet advisory lookup failed: "+ex.GetType().Name+
+                ". Software vulnerability status remains unknown; no scan has been certified.";
+        }
+        finally{if(sender is Button restoreAction)restoreAction.IsEnabled=true;}
+    }
     private async void SecretsClick(object sender,RoutedEventArgs e)
     {
         var dialog=new OpenFolderDialog{Title="Select the folder you authorize OTS to scan",Multiselect=false};if(dialog.ShowDialog()!=true)return;
@@ -111,23 +183,60 @@ public partial class MainWindow : Window
     }
     private static string ScanSecrets(string root)
     {
-        List<string> result=["OTS Firewall79X — heuristic secrets scan. No secret values retained."];var dirs=new Stack<string>();dirs.Push(root);int files=0,skipped=0;long bytes=0;var watch=Stopwatch.StartNew();
-        while(dirs.Count>0&&files<5000&&bytes<64*1024*1024&&watch.Elapsed<TimeSpan.FromMinutes(2))
+        // Explicitly selected root only. No follow of NTFS junctions, symbolic links,
+        // or other reparse points; no secret values are emitted or persisted.
+        var full=Path.GetFullPath(root);
+        if(!Directory.Exists(full))throw new DirectoryNotFoundException(full);
+        var exclusions=new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {".git",".svn","node_modules","bin","obj",".venv","vendor","dist","build"};
+        List<string> result=["OTS Firewall79X — local heuristic secrets scan",
+            "Results contain possible indicator types and local paths only, never matched values.",
+            "Excluded tree names: "+string.Join(", ",exclusions.Order())];
+        var dirs=new Stack<string>();dirs.Push(full);
+        int files=0,skipped=0,findings=0,excluded=0,errors=0;long bytes=0;
+        var watch=Stopwatch.StartNew();
+        while(dirs.Count>0&&files<5000&&bytes<64L*1024*1024&&watch.Elapsed<TimeSpan.FromMinutes(2))
         {
-            var dir=dirs.Pop();try
+            var dir=dirs.Pop();
+            try
             {
                 if(File.GetAttributes(dir).HasFlag(FileAttributes.ReparsePoint)){skipped++;continue;}
-                foreach(var child in Directory.EnumerateDirectories(dir).Take(5000))if(dirs.Count<5000)dirs.Push(child);
+                foreach(var child in Directory.EnumerateDirectories(dir).Take(5000))
+                {
+                    if(exclusions.Contains(Path.GetFileName(child))){excluded++;continue;}
+                    if(dirs.Count<5000)dirs.Push(child);else skipped++;
+                }
                 foreach(var path in Directory.EnumerateFiles(dir))
                 {
-                    if(files>=5000||bytes>=64*1024*1024)break;files++;
-                    try{var f=new FileInfo(path);if(f.Length>256*1024||f.Attributes.HasFlag(FileAttributes.ReparsePoint)){skipped++;continue;}bytes+=f.Length;var text=File.ReadAllText(path);var kind=Detections.SecretKind(text);if(kind!=null)result.Add($"{kind}: {path}");}
-                    catch(IOException){skipped++;}catch(UnauthorizedAccessException){skipped++;}
+                    if(files>=5000||bytes>=64L*1024*1024||watch.Elapsed>=TimeSpan.FromMinutes(2))break;
+                    files++;
+                    try
+                    {
+                        var f=new FileInfo(path);
+                        if(!f.Exists||f.Length>256*1024||f.Attributes.HasFlag(FileAttributes.ReparsePoint)){skipped++;continue;}
+                        // Avoid following a changed file through a symlink after enumeration.
+                        using var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,8192,FileOptions.SequentialScan);
+                        if(stream.Length>256*1024){skipped++;continue;}
+                        using var reader=new StreamReader(stream,System.Text.Encoding.UTF8,true);
+                        var text=reader.ReadToEnd();
+                        bytes+=stream.Length;
+                        foreach(var kind in Detections.SecretKinds(text))
+                        {
+                            findings++;
+                            result.Add($"{kind}: {path}");
+                            if(findings>=2500)break;
+                        }
+                        if(findings>=2500)break;
+                    }
+                    catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or System.Text.DecoderFallbackException){errors++;}
                 }
             }
-            catch(IOException){skipped++;}catch(UnauthorizedAccessException){skipped++;}
+            catch(Exception ex)when(ex is IOException or UnauthorizedAccessException){errors++;}
+            if(findings>=2500)break;
         }
-        result.Add($"Examined entries: {files}; bytes read: {bytes}; skipped/errors: {skipped}; remaining queued directories: {dirs.Count}. Budget: 5,000 files, 256 KiB/file, 64 MiB total, two minutes. Large directories may be truncated.");return string.Join(Environment.NewLine,result);
+        result.Add($"Examined entries: {files}; bytes read: {bytes}; possible indicators: {findings}; skipped: {skipped}; excluded directories: {excluded}; inaccessible/errors: {errors}; queued directories: {dirs.Count}.");
+        result.Add("Caps: 5,000 files, 256 KiB/file, 64 MiB total, 2 minutes, 2,500 indicators. Exclusions, changing files, binary and oversize content can cause misses. No external uploads or automatic remediation. Review privately before sharing report.");
+        return string.Join(Environment.NewLine,result);
     }
     private async void BreachClick(object sender,RoutedEventArgs e)
     {
