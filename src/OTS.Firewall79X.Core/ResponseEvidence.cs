@@ -53,7 +53,8 @@ public static class ForensicSnapshots
     }
 }
 
-public sealed record DailyPosture(DateTimeOffset RecordedUtc, int Score, double Confidence, long Events, long Blocks);
+public sealed record DailyPosture(DateTimeOffset RecordedUtc, int Score, double Confidence, long Events, long Blocks,
+    int HealthyLayers = 0, int UnavailableLayers = 0, int RecentHighAlerts = 0, string[]? Recommendations = null);
 public static class QuarterlyHistory
 {
     public static DateTimeOffset QuarterStart(DateTimeOffset when)
@@ -63,11 +64,11 @@ public static class QuarterlyHistory
     {
         if (!File.Exists(path)) return [];
         var info = new FileInfo(path);
-        if (info.Length > 256 * 1024) throw new InvalidDataException("Posture history is oversized");
+        if (info.Length > 1024 * 1024) throw new InvalidDataException("Posture history is oversized");
         var data = JsonSerializer.Deserialize<List<DailyPosture>>(File.ReadAllText(path), Wire.Json)
                    ?? throw new InvalidDataException("Missing history");
         if (data.Count > 500 || data.Any(d => d.Score is < 0 or > 100 || d.Confidence is < 0 or > 100
-                      || double.IsNaN(d.Confidence) || d.Events < 0 || d.Blocks < 0))
+                      || double.IsNaN(d.Confidence) || d.Events < 0 || d.Blocks < 0 || d.HealthyLayers < 0 || d.HealthyLayers > 79 || d.UnavailableLayers < 0 || d.UnavailableLayers > 79 || d.RecentHighAlerts < 0 || d.Recommendations?.Length > 5))
             throw new InvalidDataException("Invalid stored posture sample");
         return data.OrderBy(x => x.RecordedUtc).ToArray();
     }
@@ -79,7 +80,10 @@ public static class QuarterlyHistory
         var date = d.Time.UtcDateTime.Date;
         // A single day's last completed observation replaces that day's previous sample.
         prior.RemoveAll(x => x.RecordedUtc.UtcDateTime.Date == date);
-        prior.Add(new DailyPosture(d.Time.ToUniversalTime(), d.Score, d.Confidence, d.TotalEvents, d.BlockedEvents));
+        prior.Add(new DailyPosture(d.Time.ToUniversalTime(), d.Score, d.Confidence, d.TotalEvents, d.BlockedEvents,
+            d.Layers.Count(x => x.Healthy), d.Layers.Count(x => x.Mode == LayerMode.Unavailable),
+            d.Events.Count(x => x.Severity is "High" or "Critical"),
+            PostureAdvice.Recommend(d.Layers, 5).ToArray()));
         var history = prior.OrderBy(x => x.RecordedUtc).TakeLast(400).ToList();
         AtomicFile.Write(path, JsonSerializer.Serialize(history, Wire.Json));
     }
@@ -98,10 +102,13 @@ public static class QuarterlyHistory
         b.AppendLine($"Mean telemetry confidence: {samples.Average(x => x.Confidence):F1}%. Not a security effectiveness probability.");
         b.AppendLine("Event counters are observations from the current service store; no inferred cross-restart deltas.");
         b.AppendLine();
-        b.AppendLine("| UTC day | Capability score | Confidence | Observed event counter | OTS block counter |");
-        b.AppendLine("|---|---:|---:|---:|---:|");
+        b.AppendLine("| UTC day | Capability score | Confidence | Healthy layers | Unavailable layers | Recent high/critical alerts* | Event counter | OTS block counter |");
+        b.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|");
         foreach (var sample in samples)
-            b.AppendLine($"| {sample.RecordedUtc:yyyy-MM-dd} | {sample.Score} | {sample.Confidence:F1}% | {sample.Events} | {sample.Blocks} |");
+            b.AppendLine($"| {sample.RecordedUtc:yyyy-MM-dd} | {sample.Score} | {sample.Confidence:F1}% | {sample.HealthyLayers} | {sample.UnavailableLayers} | {sample.RecentHighAlerts} | {sample.Events} | {sample.Blocks} |");
+        b.AppendLine("\n*Alerts are those visible in each sampled dashboard window, not an authoritative quarterly total.");
+        b.AppendLine("\n## Recommended improvements at last observed sample");
+        foreach (var recommendation in samples[^1].Recommendations ?? []) b.AppendLine("- " + Wire.Clean(recommendation, 200));
         b.AppendLine("\nMissing days, unavailable sensors, optional capabilities, and hardware-specific limits require direct review. Historical scores do not certify protection.");
         return b.ToString();
     }
