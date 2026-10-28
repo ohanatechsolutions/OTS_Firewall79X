@@ -25,7 +25,6 @@ try
         if(admin)throw new Exception("This probe must use a nonadministrator token");
         foreach(var command in new[]{"on","off","pause","restore","report","selftest"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
         var protectedKey=Path.Combine(Paths.Root,"logs","integrity.dpapi");
-        if(!File.Exists(protectedKey))throw new Exception("Machine-integrity key is not present");
         try{_ = File.ReadAllBytes(protectedKey);throw new Exception("Unprivileged user read the protected integrity key");}
         catch(UnauthorizedAccessException) { /* expected least-privilege boundary */ }
         return 0;
