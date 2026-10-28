@@ -69,7 +69,8 @@ Check 'Pause and resume commands' { RunExe $helper '--pause --quiet';RunExe $hel
 Check 'Off and recovery' { RunExe $helper '--off --quiet';RunExe $helper '--restore --quiet' }
 Check 'Restoration preserves all original AutoRun and AutoPlay policies' {
   foreach ($pair in @(@('NoDriveTypeAutoRun',$oldAutorun),@('NoAutorun',$oldNoAutorun),@('NoAutoplayfornonVolume',$oldNonVolume))) {
-    $current=(Get-ItemProperty $policyPath -Name $pair[0] -ErrorAction SilentlyContinue).$($pair[0])
+    $props=Get-ItemProperty -Path $policyPath -Name $pair[0] -ErrorAction SilentlyContinue
+    $current=if($null -ne $props){$props.PSObject.Properties[$pair[0]].Value}else{$null}
     if($current -ne $pair[1]){throw "Original $($pair[0]) policy was not restored"}
   }
 }
