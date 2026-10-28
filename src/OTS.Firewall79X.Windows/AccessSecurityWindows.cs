@@ -30,6 +30,13 @@ public static class SshEffectiveAudit
         if(!File.Exists(executable))
             return new(LayerMode.Unavailable,false,"OpenSSH service found; system sshd.exe unavailable",
                 "Custom binary or service executable cannot be attested; no file was executed.");
+        var serviceCommand=Environment.ExpandEnvironmentVariables(path).Trim();
+        var trustedBinary=serviceCommand.StartsWith("\""+executable+"\"",StringComparison.OrdinalIgnoreCase) ||
+            serviceCommand.Equals(executable,StringComparison.OrdinalIgnoreCase) ||
+            serviceCommand.StartsWith(executable+" ",StringComparison.OrdinalIgnoreCase);
+        if(!trustedBinary)
+            return new(LayerMode.Unavailable,false,"Registered OpenSSH service executable is not the built-in system sshd.exe",
+                "Refusing to validate a different binary using the system default sshd -T output.");
         if(path.Contains(" -f ",StringComparison.OrdinalIgnoreCase) ||
            path.Contains("\t-f ",StringComparison.OrdinalIgnoreCase))
             return new(LayerMode.Unavailable,false,"OpenSSH service uses a custom -f configuration",
