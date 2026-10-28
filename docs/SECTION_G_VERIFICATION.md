@@ -48,3 +48,11 @@ Do not publish a production-ready designation until an independently provisioned
 - After 90 days, the service attempts key rotation on its next security event. A durable protected ring is written before switching to the new key in memory. If storage/DPAPI fails, the event pipeline degrades rather than rewriting old evidence with an unauthenticated key.
 - **No signed update is automatically applied:** the independently provisioned publisher key and complete update transaction/rollback are not present. A publisher signature cannot be fabricated from a checksum or self-declared key in a downloaded release.
 - All event counters reconstructed from retained segments measure **retained authenticated history**, not guaranteed lifetime history once old archives are rotated away. Off-device retention and protected retention checkpoints remain outstanding.
+
+## Production release-signing integration (not provisioned)
+
+The build signs OTS-owned payload EXEs/DLLs **before** recording the publish-file SHA-256 inventory, then signs the compiled Inno Setup installer **before** producing `.sha256` and the release ZIP. The verifier checks all OTS binaries against the same independently configured SHA-256 certificate fingerprint and blocks a production release if any signature or publisher identity is invalid.
+
+The protected workflow inputs are `OTS_RELEASE_CHANNEL=production` and `OTS_SIGNING_CERT_SHA256` (repository variables), plus `OTS_CODESIGN_PFX_BASE64` and `OTS_CODESIGN_PFX_PASSWORD` (GitHub Actions secrets). Signing private-key material is injected only for a production **push to main**, never for pull requests. The installer cannot be called publisher-signed merely because the signing script exists. **These credentials are not provisioned by this implementation**, and no key material is committed to the repository.
+
+The signing workflow requires a legitimately trusted code-signing identity and timestamp availability. Until then, the release must remain a transparently unsigned development preview; the automatic trust gate continues to reject production designation.
