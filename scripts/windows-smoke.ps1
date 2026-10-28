@@ -26,7 +26,7 @@ function AssertFirewallUnchanged([string]$Stage) {
   # is initialized. Keep them in the full forensic snapshots, but exclude only
   # Microsoft's ms-resource packaged-app rules from the equality assertion.
   # All other rules, including OTS-owned rules, must remain identical.
-  $ignoreWindowsPackageRule = '^@\\{Microsoft\\.[^|]*\\?ms-resource://'
+  $ignoreWindowsPackageRule = '^@\{Microsoft\.[^|]*\?ms-resource://'
   $baselineStable = @($before -split "`n" | Where-Object { $_ -notmatch $ignoreWindowsPackageRule })
   $currentStable = @($current -split "`n" | Where-Object { $_ -notmatch $ignoreWindowsPackageRule })
   $diff = Compare-Object -ReferenceObject $baselineStable -DifferenceObject $currentStable | Out-String -Width 1000
