@@ -137,7 +137,8 @@ public partial class MainWindow : Window
     private void RestoreArchiveClick(object sender,RoutedEventArgs e)
     {
         var open=new OpenFileDialog{Filter="Encrypted OTS archive|*.otsbackup"};if(open.ShowDialog()!=true)return;
-        try{var plain=SecureArchive.Decrypt(open.FileName,ArchivePassword.Password);var save=new SaveFileDialog{Filter="Restored report|*.md",FileName="OTS-Restored-Report.md"};if(save.ShowDialog()==true)File.WriteAllBytes(save.FileName,plain);CryptographicOperations.ZeroMemory(plain);StatusLine.Text="Archive authenticated and restored to your chosen file.";}catch(Exception ex){MessageBox.Show("Archive restore failed: "+ex.Message);}finally{ArchivePassword.Clear();}
+        byte[]? plain=null;
+        try{plain=SecureArchive.Decrypt(open.FileName,ArchivePassword.Password);var save=new SaveFileDialog{Filter="Restored report|*.md",FileName="OTS-Restored-Report.md"};if(save.ShowDialog()==true){File.WriteAllBytes(save.FileName,plain);StatusLine.Text="Archive authenticated and restored to your chosen file.";}}catch(Exception ex){MessageBox.Show("Archive restore failed: "+ex.Message);}finally{if(plain!=null)CryptographicOperations.ZeroMemory(plain);ArchivePassword.Clear();}
     }
     private async void FolderBackupClick(object sender,RoutedEventArgs e)
     {

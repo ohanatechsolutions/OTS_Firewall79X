@@ -30,6 +30,9 @@ jobs:
       - name: Enforce dependency gate and include test evidence
         shell: pwsh
         run: ./scripts/finalize.ps1
+      - name: Verify real Windows setup executable, checksum, and release ZIP contents
+        shell: pwsh
+        run: ./scripts/verify-distribution.ps1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -15,3 +15,6 @@ Logging is bounded and HMAC-chained, but end-to-end segment verification and dur
 Encrypted archives support reports and selected-folder file backups, with a 60 MiB / 5,000-file limit and verified restoration into a new folder. Empty directories, links, ACLs, full-system images and scheduled general backups are not preserved. External shipping remains incomplete. Quarterly report scheduling lacks durable historical trend storage. Recovery kit is not bootable media. Full layer-by-layer configuration controls are unfinished.
 
 Installer is unsigned; trusted update delivery requires a valid signing identity. Upgrade stops the previous protection instance and requires reactivation. Installer transaction rollback after arbitrary interruption, full reboot/chaos tests, unprivileged IPC attack tests, and real Windows 10/11 hardware validation require more evidence before final release. CI Server 2025 evidence does not imply Windows 10/11 passed.
+
+
+**GitHub source archive caveat:** The `installer/OTS-Firewall79X-Setup.exe` tracked in Git LFS may download as a 134-byte text pointer in an automatically generated GitHub source ZIP. That is not executable. Download the compiled installer from Releases or clone with Git LFS. The compiled Release ZIP has a real `installer/` folder. Installer execution on the user's specific Windows 11 Home device is not yet verified.

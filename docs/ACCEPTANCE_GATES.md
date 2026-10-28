@@ -8,3 +8,6 @@ E GitHub delivery: source and operational build/release workflow present. Exact 
 F 79-layer coverage: FAIL — all IDs are accounted for, but required capabilities remain incomplete.
 
 A stable production release is prohibited until all required gates pass. The automatically published development prerelease is not final acceptance and must be clearly labelled incomplete.
+
+
+**Packaging-specific caveat:** GitHub's auto-generated source archive can contain a non-executable Git LFS pointer under an `.exe` filename. Only the verified release ZIP or standalone Release asset is an installer for ordinary users. The release ZIP now intentionally includes `installer/OTS-Firewall79X-Setup.exe` and its matching checksum. The matching verification gate is `scripts/verify-distribution.ps1`.
