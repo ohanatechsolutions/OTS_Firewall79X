@@ -155,7 +155,8 @@ Test("Section G: strict IPC request schema rejects property injection and duplic
     Bad("{\"Command\":\"status\",\"Command\":\"off\"}");
     Bad("{\"Command\":\"status\",\"Layer\":1}");
     Bad("{\"Command\":\"status\",\"Enabled\":true}");
-    Bad("{\"Command\":\"other\"}");
+    // Unknown command names are well-formed requests, but the server explicitly denies them.
+    Assert(!Wire.ValidRequest(new Request("other")));
     Bad("{\"Command\":null}");
     Bad("[]");
     Bad("{\"command\":\"status\"}");
