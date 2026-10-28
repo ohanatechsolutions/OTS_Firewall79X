@@ -62,6 +62,50 @@ public static class EndpointInventory
         }
         return result.Order(StringComparer.OrdinalIgnoreCase).ToList();
     }
+    public static List<string> BrowserExtensions()
+    {
+        List<string> result=[];
+        foreach(var sid in Profiles())
+        {
+            try
+            {
+                using var profile=Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\"+sid);
+                string? folder=profile?.GetValue("ProfileImagePath") as string;
+                if(string.IsNullOrWhiteSpace(folder))continue;
+                folder=Environment.ExpandEnvironmentVariables(folder);
+                foreach(var name in new[]{@"Google\Chrome",@"Microsoft\Edge",
+                    @"BraveSoftware\Brave-Browser",@"Vivaldi"})
+                {
+                    var userData=Path.Combine(folder,"AppData","Local",name,"User Data");
+                    if(!Directory.Exists(userData))continue;
+                    foreach(var browserProfile in Directory.EnumerateDirectories(userData).Take(64))
+                    {
+                        var profileName=Path.GetFileName(browserProfile);
+                        if(profileName!="Default"&&!profileName.StartsWith("Profile ",StringComparison.OrdinalIgnoreCase))continue;
+                        var extensions=Path.Combine(browserProfile,"Extensions");
+                        if(!Directory.Exists(extensions))continue;
+                        foreach(var ext in Directory.EnumerateDirectories(extensions).Take(512))
+                        {
+                            var versions=Directory.EnumerateDirectories(ext).Select(Path.GetFileName).Order().Take(20);
+                            result.Add(sid+":"+name+":"+profileName+":"+Path.GetFileName(ext)+":"+
+                                string.Join(",",versions));
+                        }
+                    }
+                }
+                var firefox=Path.Combine(folder,"AppData","Roaming","Mozilla","Firefox","Profiles");
+                if(Directory.Exists(firefox))
+                    foreach(var fp in Directory.EnumerateDirectories(firefox).Take(64))
+                    {
+                        var addons=Path.Combine(fp,"extensions");if(!Directory.Exists(addons))continue;
+                        foreach(var file in Directory.EnumerateFileSystemEntries(addons).Take(512))
+                            result.Add(sid+":firefox:"+Path.GetFileName(fp)+":"+Path.GetFileName(file));
+                    }
+            }
+            catch(IOException){}catch(UnauthorizedAccessException){}catch(System.Security.SecurityException){}
+        }
+        return result.Order(StringComparer.OrdinalIgnoreCase).Take(4096).ToList();
+    }
     public static List<string> SoftwareSources()
     {
         List<string> values=[];
