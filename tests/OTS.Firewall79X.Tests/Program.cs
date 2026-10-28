@@ -391,7 +391,7 @@ Test("Section H configured-only resilience actions remain administrator-only",()
         Assert(Wire.Commands.Contains(command));
         Assert(Wire.RequiresAdmin(command));
     }
-    var request=new Request("configure-export",Destination=@"Z:\\OTS-logs",Secret="NeverLogThisPassword");
+    var request=new Request("configure-export",Destination:@"Z:\\OTS-logs",Secret:"NeverLogThisPassword");
     using var stream=new MemoryStream();
     Wire.WriteAsync(stream,request,default).GetAwaiter().GetResult();
     stream.Position=0;
