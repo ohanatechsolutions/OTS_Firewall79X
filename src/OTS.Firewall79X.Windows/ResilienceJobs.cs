@@ -204,9 +204,14 @@ public sealed class ResilienceJobs
             }
             int sent = OffDeviceLogExport.RetryPending(queue, export.Destination,
                 message => eventSink(70, "Warning", "Encrypted log shipping retry failed", message));
-            Record("export", export, true, null);
-            if (sent > 0) eventSink(70, "Info", "Encrypted log archives delivered",
-                $"{sent} verified encrypted segments copied to configured external destination");
+            if (sent > 0)
+            {
+                Record("export", export, true, null);
+                eventSink(70, "Info", "Encrypted log archives delivered",
+                    $"{sent} verified encrypted segments copied to configured external destination");
+            }
+            // An empty queue cannot prove off-device delivery. Preserve a pending/previous
+            // status rather than recording a fabricated successful shipment.
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
                                           or CryptographicException or ArgumentException)
