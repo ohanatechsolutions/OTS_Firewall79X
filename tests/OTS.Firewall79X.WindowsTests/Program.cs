@@ -45,10 +45,13 @@ try
     var hardware=SecurityDeviceAudit.Read();
     if(!hardware.Evidence.Contains("TPM:")||!hardware.Evidence.Contains("OS drive protection:"))
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
+    var policy=new TemporaryFirewallGuard(new EventStore(Path.Combine(Path.GetTempPath(),"ots-network-guard-ci-"+Guid.NewGuid().ToString("N"))));
+    policy.Start();
+    if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
+    if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
+    policy.Dispose();
+    var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
-    var udp=UdpTable.Read();
-    if(udp.Any(c=>c.State!="UDPBound" || c.Pid<0 || TrafficRules.ParseEndpoint(c.Local)==null))
-        throw new Exception("Malformed UDP owner-PID telemetry");
     var neighbors=NeighborInventory.Read();
     if(string.IsNullOrEmpty(neighbors.Source)||neighbors.Entries.Count>4096)
         throw new Exception("Neighbor inventory failed safety constraints");

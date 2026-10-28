@@ -8,47 +8,6 @@ using OTS.Firewall79X.Core;
 
 namespace OTS.Firewall79X.Windows;
 
-/// <summary>Read-only OS socket tables. UDP has no remote peer in the Windows owner-PID table.</summary>
-public static class UdpTable
-{
-    [DllImport("iphlpapi.dll", SetLastError=true)]
-    private static extern uint GetExtendedUdpTable(IntPtr table,ref int size,bool order,int family,int tableClass,uint reserved);
-    public static List<Connection> Read()
-    {
-        List<Connection> sockets=[];
-        foreach(int family in new[]{2,23})
-        {
-            int size=0;uint result=GetExtendedUdpTable(IntPtr.Zero,ref size,false,family,1,0);
-            if(result is not (0 or 122))throw new Win32Exception((int)result);
-            if(size<4||size>16*1024*1024)throw new InvalidDataException("Invalid UDP table size");
-            var memory=Marshal.AllocHGlobal(size);
-            try
-            {
-                result=GetExtendedUdpTable(memory,ref size,false,family,1,0);
-                if(result!=0)throw new Win32Exception((int)result);
-                var bytes=new byte[size];Marshal.Copy(memory,bytes,0,size);
-                int rows=BitConverter.ToInt32(bytes,0),stride=family==2?12:28;
-                if(rows<0||4L+(long)rows*stride>size)throw new InvalidDataException("Invalid UDP row count");
-                for(int i=0;i<rows&&sockets.Count<8000;i++)
-                {
-                    int p=4+i*stride, pid=BitConverter.ToInt32(bytes,p+(family==2?8:24));
-                    int port=(bytes[p+(family==2?4:20)]<<8)|bytes[p+(family==2?5:21)];
-                    IPAddress local=family==2
-                        ?new IPAddress(bytes.AsSpan(p,4))
-                        :new IPAddress(bytes.AsSpan(p,16),BitConverter.ToUInt32(bytes,p+16));
-                    string name="Unavailable";
-                    try{using var process=Process.GetProcessById(pid);name=process.ProcessName;}
-                    catch(ArgumentException){name="Exited";}
-                    catch(Win32Exception){name="Access restricted";}
-                    sockets.Add(new(pid,name,$"[{local}]:{port}","", "UDPBound"));
-                }
-            }
-            finally{Marshal.FreeHGlobal(memory);}
-        }
-        return sockets;
-    }
-}
-
 /// <summary>Native Windows neighbor provider with IPv4 ARP fallback.
 /// Polling cannot establish that all LAN hosts were discovered.</summary>
 public static class NeighborInventory

@@ -16,7 +16,7 @@ The current preview is unsigned. Its build/install verification status is docume
 
 - Native WPF dashboard, full numbered layer catalog, event history, rate-limited desktop alerts, per-process TCP table, reports, optional user-session tools, and separate recovery executable.
 - Windows service with local ACL-protected named pipes; mutation requires an elevated administrator token. The GUI itself is not elevated.
-- Existing Windows Firewall policy inspection and exact-match conflict analysis. Firewall rules and profile defaults are not overwritten.
+- Existing Windows Firewall policy inspection and exact-match conflict analysis. Existing rules and profile defaults are preserved. Optional OTS-owned temporary inbound exact-IP restrictions can be triggered only by high-confidence patterns in **already blocked** Windows Security 5157 events; restrictions expire and are removed on normal stack shutdown or service restart. This is not packet-level DoS mitigation.
 - Reversible AutoRun hardening using a durable intent journal and compare-before-restore semantics.
 - Read-only UAC, DEP, LSA protection, and SMBv1 server-hardening indicators with explicit unknown statuses (not a full host hardening assessment).
 - HMAC authentication of retained security-log entries on service startup; chained records now continue across restarts. Legacy unlinked segments are disclosed.
@@ -38,7 +38,7 @@ x64 Windows 11, or compatible Windows 10 builds (installer minimum 1809). Micros
 
 ## Controls and status
 
-ON starts the service collectors and journaled AutoRun hardening. OFF and Restore undo only settings still equal to OTS-applied values. Pause records a 15-minute deadline. Existing independent Windows security remains active when OTS is off. The preview deliberately reports **Partially Protected** while features remain incomplete. Capability score measures declared layer health, not a probability of protection. Actual OTS block count remains zero because this preview does not install a network blocking engine. Observed Windows blocks are separately described in events.
+ON starts the service collectors and journaled AutoRun hardening. OFF and Restore undo only settings still equal to OTS-applied values. Pause records a 15-minute deadline. Existing independent Windows security remains active when OTS is off. The preview deliberately reports **Partially Protected** while features remain incomplete. Capability score measures declared layer health, not a probability of protection. Actual OTS packet-drop count remains zero unless independently attributed: installing a temporary restriction is **not** proof that a later packet was dropped. Existing Windows blocks and OTS-installed rule changes are separately described in events. Temporary OTS rules require normal service cleanup; a hard crash may leave them until recovery.
 
 Interactive monitors require the app to remain open and the opt-in checkbox. No clipboard contents or plaintext matched secrets are written to logs. Reports can include IP addresses and file locations. Protected service data is stored under ProgramData/Ohana Tech Solutions/Firewall79X, with SYSTEM/administrators-only access.
 
@@ -51,3 +51,7 @@ Use **Settings & Recovery → Restore previous configuration**, or the separate 
 Build requirements apply to contributors, not installed users: pinned .NET SDK 10.0.403 and Inno Setup 6 on Windows. Run `scripts/build.ps1`; `scripts/windows-smoke.ps1` is restricted to disposable GitHub Actions runners. Dependencies are locked. `dotnet run --project tests/OTS.Firewall79X.Tests -c Release` executes core regressions. CI produces an installer, release ZIP, SBOM, checksums, build manifest, screen previews, and real test result files.
 
 See [architecture](docs/ARCHITECTURE.md), [limitations](KNOWN_LIMITATIONS.md), [dependencies](EXTERNAL_TOOLS.md), and [security reporting](SECURITY.md).
+
+## Network protection implementation notes
+
+See [Section A network evidence](docs/SECTION_A_NETWORK_EVIDENCE.md) for the temporary inbound source-rule policy, conservative thresholds, rollback limitations, UDP socket inventory, Public-profile SMB review, Bluetooth radio telemetry and the remaining layers 1–10 acceptance gaps. The present build is **not** a replacement for Windows Defender Firewall and has not passed physical Windows 10/11 Section A acceptance tests.

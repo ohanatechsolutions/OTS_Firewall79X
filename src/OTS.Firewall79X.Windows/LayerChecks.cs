@@ -17,18 +17,20 @@ public sealed class LayerChecks : IDisposable
     private readonly ClockDriftProbe clock=new();
     private DateTimeOffset lastClockAlert=DateTimeOffset.MinValue;
     private DefenderNetworkIds.Status? defenderNetwork;
-    public List<Connection> UdpSockets {get;private set;}=[];
-    public string? UdpError {get;private set;}
 
     private readonly Dictionary<string,List<DateTimeOffset>> connectionsHistory=[];
     private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start)> processSamples=[];
     public EventSensors? Sensors {get;set;}
+    public TemporaryFirewallGuard? NetworkGuard {get;set;}
+    private HashSet<string>? bluetoothPrevious;
     public FeodoThreatFeed? ThreatFeed {get;set;}
     private readonly HashSet<string> intelAlerts=[];
     private SecurityDeviceAudit.Result? deviceSnapshot;
     private SecurityDeviceAudit.Result DeviceStatus()=>deviceSnapshot??=SecurityDeviceAudit.Read();
     public List<Connection> Connections {get;private set;}=[];
     public string? NetworkError {get;private set;}
+    public string? UdpError {get;private set;}
+    private bool? bluetoothDiscoverable;
     public FirewallAudit? Firewall {get;}=new();
     private (bool Safe,string Description,List<FirewallAudit.Rule> Rules)? firewall;
     public LayerChecks(EventStore events){this.events=events;}
@@ -36,8 +38,7 @@ public sealed class LayerChecks : IDisposable
     {
         firewall=null;NetworkError=null;UdpError=null;deviceSnapshot=null;neighborSnapshot=null;defenderNetwork=null;
         try{Connections=NetworkTables.Connections();TrackNetwork();TrackIntel();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
-        try{UdpSockets=UdpTable.Read();}catch(Exception ex){UdpSockets=[];UdpError=Wire.Clean(ex.Message,180);}
-
+        try{Connections.AddRange(NetworkTables.UdpSockets());}catch(Exception ex){UdpError=ex.Message;}
         try{firewall=Firewall!.Read();}catch(Exception ex){events.Add(1,"Warning","Firewall query failed",ex.Message);}
     }
     private void TrackNetwork()
@@ -99,12 +100,32 @@ public sealed class LayerChecks : IDisposable
     {
         switch(id)
         {
-            case 1:case 6:case 9:
+            case 1:
                 if(firewall==null)return Missing(id,"Windows Firewall state could not be read");
-                return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Enforcement is provided by existing Windows Firewall policy. Existing exceptions are preserved. OTS does not automatically overwrite profile settings."):Bad(id,firewall.Value.Description,"Some profiles are disabled or allow inbound by default; automatic policy replacement is withheld to preserve management access.");
-            case 2:return Channel(id,"Security","Detects high rates of logged blocked connections; does not rate-limit SYN/ICMP/UDP floods or prevent link saturation.");
-            case 3:return Channel(id,"Security","Detects 12 distinct blocked destination ports per source within 60 seconds; alerts without automatic bans.");
-            case 4:return Missing(id,"Packet-level anti-spoofing and malformed-packet inspection are not implemented. Windows TCP/IP validation is not claimed as an OTS layer.");
+                return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Windows Firewall is enforcing inbound default deny on all three profiles. Rule precedence, policy conflicts, exceptions and statefulness are not independently certified."):Bad(id,firewall.Value.Description,"One or more profiles allow inbound or have firewall disabled. No automatic blanket policy overwrite.");
+            case 6:
+                if(firewall==null)return Missing(id,"Windows Firewall state unavailable for IPv6 policy audit");
+                if(NetworkError!=null||UdpError!=null)return Missing(id,"TCP/UDP IPv4/IPv6 endpoint enumeration incomplete: "+(NetworkError??UdpError));
+                return firewall.Value.Safe
+                    ?Good(id,$"All firewall profiles have inbound default deny; {Connections.Count(c=>c.State=="UDP Bound")} IPv4/IPv6 UDP bindings observed",LayerMode.Monitoring,"Firewall profile policies apply to both families; raw ICMPv6, fragmentation, all WFP policies and recovery parity have not been independently verified.")
+                    :Bad(id,firewall.Value.Description,"A disabled/permissive profile undermines both address families.");
+            case 9:
+                if(firewall==null)return Missing(id,"Windows Firewall policy unavailable");
+                bool publicSmb=firewall.Value.Rules.Any(r=>r.Enabled&&r.Direction=="1"&&r.Action=="1"&&r.Protocol=="6"&&
+                    int.TryParse(r.Profiles,out int profiles)&&(profiles&4)!=0&&
+                    r.RemoteAddresses is "*" or "" && r.LocalPorts.Split(',').Any(p=>p.Trim() is "139" or "445"));
+                if(!firewall.Value.Safe)return Bad(id,firewall.Value.Description,"Inbound firewall defaults do not enforce a safe baseline on every profile.");
+                return publicSmb
+                    ?Bad(id,"Broad SMB inbound allow rule is configured for the Public profile","An overlapping block can change effective behavior; review exposed sharing and remote access.")
+                    :Good(id,"All Windows Firewall profiles enabled/default-deny; no broad TCP 139/445 Public-profile allow observed",LayerMode.Auditing,"Read-only rule review; not proof of effective GPO, network category, broader sharing protocols or automatic untrusted Wi-Fi hardening.");
+            case 2:case 3:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security event subscription is unavailable");
+                if(!AuditPolicy.Coverage(id).Enabled)return Missing(id,"Filtering Platform Connection failure auditing is disabled; source restrictions are not reliably triggered.");
+                if(NetworkGuard?.Operational!=true)return Missing(id,"Temporary Windows Firewall source restriction API unavailable: "+(NetworkGuard?.Health??"not started"));
+                return id==2
+                    ?Good(id,$"Event-correlated source restrictions active; {NetworkGuard.ActiveRules} temporary inbound rules",LayerMode.Monitoring,"Not SYN, UDP, ICMP, connection-rate or link-saturation mitigation; only Windows 5157 already-blocked connections are observed.")
+                    :Good(id,$"Validated inbound scan alerting and exact-source five-minute blocks; {NetworkGuard.ActiveRules} temporary rules",LayerMode.Enforcing,"Uses already-blocked Windows 5157 events; 20-port/150-event thresholds and cooldown reduce but do not eliminate false positives; a hard crash can leave rules until service recovery.");
+            case 4:return Missing(id,"No supported WFP callout/packet parser for ingress spoofing, malformed IPv4/IPv6 headers, extension chains or fragments; Windows TCP/IP validation is not claimed as an OTS packet-inspection engine.");
             case 5:
                 return ThreatFeed?.Active is { } intel
                     ?Good(id,$"Observation-only: {intel.Addresses.Count} recent Feodo Tracker C2 IPv4 indicators; established outbound TCP connections compared each scan",LayerMode.Monitoring,"No source-blocking rules, domain intelligence, full UDP visibility or signed-feed proof. Only currently fresh source timestamps are accepted.")
@@ -120,8 +141,21 @@ public sealed class LayerChecks : IDisposable
                     ?Good(id,$"{Sensors.ObservedDnsResponses} actual DNS Client 3008 response events correlated for public-to-private address transitions",LayerMode.Monitoring,"Heuristic warning only: may miss DoH, alternate resolvers and queries without Event 3008; split-horizon networks can trigger legitimate changes. No DNS interception or rebinding block is applied.")
                     :Missing(id,"DNS Client subscription exists, but no valid address-bearing Event 3008 responses have been observed; rebinding telemetry is unverified.");
             case 10:
-                var bt=SystemQueries.Wmi("root\\cimv2","SELECT Name,Status FROM Win32_PnPEntity WHERE PNPClass='Bluetooth'","Name","Status");Changed(id,"Bluetooth device inventory",bt);
-                return bt.Count==0?Na(id,"No Bluetooth device reported by Windows"):Good(id,$"{bt.Count} Bluetooth devices observed",LayerMode.Monitoring,"Inventory changes only; pairing authorization and discoverability hardening are not implemented.");
+                var bt=SystemQueries.Wmi("root\\cimv2","SELECT Name,Status,PNPDeviceID FROM Win32_PnPEntity WHERE PNPClass='Bluetooth'","Name","Status","PNPDeviceID");
+                var currentBt=bt.Select(x=>x.GetValueOrDefault("PNPDeviceID","")).Where(x=>x.Length>0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if(bluetoothPrevious!=null)
+                    foreach(var device in currentBt.Except(bluetoothPrevious).Take(32))
+                        events.Add(10,"Warning","New Bluetooth PnP device observed","Device inventory changed; pairing/discoverability and connection authorization are not attested. ID fingerprint "+SystemQueries.Fingerprint(device)[..16]);
+                bluetoothPrevious=currentBt;Changed(id,"Bluetooth device inventory",bt);
+                var radio=BluetoothRadioAudit.Read();
+                if(bt.Count==0&&radio.Available&&radio.Radios==0)return Na(id,"No active native Bluetooth radio or Bluetooth PnP inventory");
+                if(!radio.Available)return Missing(id,radio.Evidence);
+                bool visible=radio.Discoverable>0;
+                if(visible&&bluetoothDiscoverable!=true)
+                    events.Add(10,"Warning","Bluetooth radio discoverable","Windows native API reports a discoverable local Bluetooth radio; verify whether discovery is intentional.");
+                bluetoothDiscoverable=visible;
+                return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence,LayerMode.Monitoring,
+                    "Native discovery/connectability and PnP changes are monitored; pairing authorization and authenticated remote connections are not independently confirmed.");
             case 11:case 12:case 13:return Missing(id,"Deception monitor has not reported health");
             case 14:
                 defenderNetwork??=DefenderNetworkIds.Read();
@@ -137,7 +171,7 @@ public sealed class LayerChecks : IDisposable
                 return Channel(id,"Security","Windows blocked connections and login events are correlated; specific supported signals carry cautious MITRE ATT&CK technique hypotheses (T1110, T1021.001, T1059.001). Unverified network events are not assigned techniques.");
             case 16:
                 if(NetworkError!=null&&UdpError!=null)return Missing(id,"TCP and UDP table collection unavailable: "+NetworkError+"; "+UdpError);
-                return Good(id,$"{Connections.Count} TCP endpoints and {UdpSockets.Count} UDP bindings with owning process IDs; DNS Client responses observed={Sensors?.ObservedDnsResponses??0}",
+                return Good(id,$"{Connections.Count(c=>c.State!="UDP Bound")} TCP endpoints and {Connections.Count(c=>c.State=="UDP Bound")} UDP bindings with owning process IDs; DNS Client responses observed={Sensors?.ObservedDnsResponses??0}",
                     LayerMode.Monitoring,"TCP/UDP snapshots are not packet capture; UDP remote peer and query-to-process association are unavailable in native socket tables. Short-lived traffic, DoH and alternate resolvers may not be observed."+
                     (UdpError==null?"":" UDP collector unavailable: "+UdpError));
             case 17:case 20:
@@ -171,7 +205,7 @@ public sealed class LayerChecks : IDisposable
                 if(NetworkError!=null)return Missing(id,NetworkError);
                 var listeners=Connections.Where(c=>c.State=="Listening")
                     .Select(c=>$"TCP {c.Process} {c.Local}")
-                    .Concat(UdpSockets.Select(c=>$"UDP {c.Process} {c.Local}"))
+                    .Concat(Connections.Where(c=>c.State=="UDP Bound").Select(c=>$"UDP {c.Process} {c.Local}"))
                     .Order(StringComparer.OrdinalIgnoreCase).Take(12000).ToArray();
                 if(id==19)
                 {
@@ -188,7 +222,7 @@ public sealed class LayerChecks : IDisposable
                     previousListeners=currentListeners;
                     Changed(19,"Listening TCP and bound UDP services",listeners);
                 }
-                return Good(id,$"{Connections.Count(c=>c.State=="Listening")} listening TCP sockets; {UdpSockets.Count} bound UDP sockets (including ephemeral)",
+                return Good(id,$"{Connections.Count(c=>c.State=="Listening")} listening TCP sockets; {Connections.Count(c=>c.State=="UDP Bound")} bound UDP sockets (including ephemeral)",
                     LayerMode.Monitoring,"Read-only local socket inventory; wildcard bindings may still be firewalled and UDP bindings are not established connections. Router, NAT, upstream policy and external reachability are not checked."+
                     (UdpError==null?"":" UDP inventory unavailable: "+UdpError));
             case 21:
