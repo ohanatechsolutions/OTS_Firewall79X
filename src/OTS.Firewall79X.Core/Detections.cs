@@ -28,10 +28,44 @@ public static class Detections
         if(name.EndsWith(".pdf.exe")||name.EndsWith(".jpg.exe"))return "Executable with misleading double extension";
         return null;
     }
+    /// <summary>Strict, bounded indicators only. Returns categories, never source tokens.
+    /// A match is not proof of an active or exploitable credential.</summary>
+    public static IReadOnlyList<string> SecretKinds(string text)
+    {
+        if(text.Length>1024*1024)throw new ArgumentOutOfRangeException(nameof(text),"File exceeds scanner budget");
+        if(text.IndexOf('\0')>=0)return [];
+        var types=new List<string>();
+        if(text.Contains("-----BEGIN PRIVATE KEY-----",StringComparison.Ordinal)||
+           text.Contains("-----BEGIN RSA PRIVATE KEY-----",StringComparison.Ordinal)||
+           text.Contains("-----BEGIN EC PRIVATE KEY-----",StringComparison.Ordinal)||
+           text.Contains("-----BEGIN OPENSSH PRIVATE KEY-----",StringComparison.Ordinal)||
+           text.Contains("-----BEGIN PGP PRIVATE KEY BLOCK-----",StringComparison.Ordinal))
+            types.Add("Private key");
+        static bool Has(string source,string pattern)
+        {
+            try{return System.Text.RegularExpressions.Regex.IsMatch(source,pattern,
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(150));}
+            catch(System.Text.RegularExpressions.RegexMatchTimeoutException){return false;}
+        }
+        if(Has(text,@"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,})\b"))
+            types.Add("Possible GitHub access token");
+        if(Has(text,@"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"))
+            types.Add("Possible AWS access key identifier (not a secret by itself)");
+        if(Has(text,@"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"))
+            types.Add("Possible Slack token");
+        if(Has(text,@"\bAIza[0-9A-Za-z_-]{35}\b"))
+            types.Add("Possible Google API key");
+        if(Has(text,@"\bsk-(?:proj-)?[A-Za-z0-9_-]{30,}\b"))
+            types.Add("Possible API key");
+        if(Has(text,@"(?i)\b(?:client[_-]?secret|api[_-]?key|access[_-]?token|password)\b\s*[:=]\s*[""']?(?!(?:redacted|example|changeme|placeholder|none|null|undefined|your[_-]?)\b)[A-Za-z0-9_+=/-]{24,}"))
+            types.Add("Possible hard-coded credential assignment");
+        return types;
+    }
     public static string? SecretKind(string text)
     {
-        if(text.Contains("-----BEGIN PRIVATE KEY-----")||text.Contains("-----BEGIN RSA PRIVATE KEY-----"))return "Private key";
-        if(System.Text.RegularExpressions.Regex.IsMatch(text,@"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|AKIA[A-Z0-9]{16})\b",System.Text.RegularExpressions.RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(100)))return "Possible access token";
-        return null;
+        // Compatibility for callers expecting one indicator.
+        var categories=SecretKinds(text);
+        return categories.FirstOrDefault(x=>x=="Private key")??categories.FirstOrDefault();
     }
 }
