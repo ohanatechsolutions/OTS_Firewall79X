@@ -226,10 +226,11 @@ public sealed class DeceptionMonitor : IDisposable
                         && r.AuditFlags == auditRule.AuditFlags);
                 if (!exists)
                 {
-                    security.AddAuditRule(auditRule);
-                    file.SetAccessControl(security);
+                    // Persist intent before the protected SACL write for crash recovery.
                     owned.Add(path);
                     File.WriteAllLines(ownershipFile, owned);
+                    security.AddAuditRule(auditRule);
+                    file.SetAccessControl(security);
                 }
             }
             auditReady = true;
