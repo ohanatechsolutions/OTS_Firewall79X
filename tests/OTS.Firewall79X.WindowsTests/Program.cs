@@ -96,6 +96,29 @@ try
             throw new Exception("Unrelated file produced a canary tamper false positive");
     }
     finally { File.Delete(unrelatedPath); }
+    // Use true Security 4663 telemetry for read attribution, not a synthetic
+    // event. Conditional because the service never changes machine audit policy.
+    var canaryStatus=(await Ipc.SendAsync("status")).Dashboard?.Layers.Single(x=>x.Id==11);
+    bool canaryReadAuditing=AuditPolicy.Coverage(31).Enabled
+        && canaryStatus?.Evidence.Contains("read-audit setup: Narrow canary-file SACL installed") == true;
+    if(canaryReadAuditing)
+    {
+        var prior=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+            e.Layer==11 && e.Kind=="Audited canary file read");
+        // Read in this separate Windows integration-test process so it cannot
+        // be mistaken for the service's own integrity-verifier reads.
+        _ = File.ReadAllText(credentialsPath);
+        bool readFound=false;
+        for(int attempt=0;attempt<15;attempt++)
+        {
+            await Task.Delay(400);
+            var observed=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+                e.Layer==11 && e.Kind=="Audited canary file read");
+            if(observed>prior){readFound=true;break;}
+        }
+        if(!readFound)
+            throw new Exception("Enabled canary audit policy/SACL failed to attribute a genuine file read");
+    }
     var originalCanary=File.ReadAllText(credentialsPath);
     try
     {
