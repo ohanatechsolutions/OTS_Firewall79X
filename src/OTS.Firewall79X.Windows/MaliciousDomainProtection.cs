@@ -134,6 +134,12 @@ public sealed class DomainHostsProtection
     {
         lock (gate)
         {
+            if (!File.Exists(hosts))
+            {
+                applied = false;
+                evidence = "Windows hosts file absent; no OTS domain blocks remain";
+                return;
+            }
             var current = Read();
             var clean = ManagedHostsSection.Remove(current);
             if (current != clean)
