@@ -59,8 +59,12 @@ public sealed class LayerChecks
             var fingerprint=$"{c.Pid}:{host}";
             if(intelAlerts.Count>2000)intelAlerts.Clear();
             if(intelAlerts.Add(fingerprint))
+            {
+                bool blocked=NetworkGuard?.BlockObservedIntelligence(host,DateTimeOffset.UtcNow)==true;
                 events.Add(5,"High","Possible botnet C2 connection",
-                    $"Windows observed {Wire.Clean(c.Process,80)} (PID {c.Pid}) connected to a Feodo-listed IPv4 address; review network activity. No OTS block was applied.");
+                    $"Windows observed {Wire.Clean(c.Process,80)} (PID {c.Pid}) connected to a Feodo-listed IPv4 address. "+
+                    (blocked?"A temporary outbound rule was installed; any subsequent drops are not verified.":"No additional OTS restriction was installed."));
+            }
         }
     }
     private LayerResult Good(int id,string evidence,LayerMode mode=LayerMode.Auditing,string limitation="")=>new(id,mode,true,evidence,limitation);
@@ -115,7 +119,7 @@ public sealed class LayerChecks
             case 4:return Missing(id,"No supported WFP callout/packet parser for ingress spoofing, malformed IPv4/IPv6 headers, extension chains or fragments; Windows TCP/IP validation is not claimed as an OTS packet-inspection engine.");
             case 5:
                 return ThreatFeed?.Active is { } intel
-                    ?Good(id,$"Observation-only: {intel.Addresses.Count} recent Feodo Tracker C2 IPv4 indicators; established outbound TCP connections compared each scan",LayerMode.Monitoring,"No source-blocking rules, domain intelligence, full UDP visibility or signed-feed proof. Only currently fresh source timestamps are accepted.")
+                    ?Good(id,$"{intel.Addresses.Count} fresh Feodo C2 IPv4 indicators; {NetworkGuard?.IntelligenceRules??0} short-lived exact-destination outbound rules; observed TCP connections monitored",LayerMode.Monitoring,"Rules are reactive and may not interrupt existing connections; not signed intelligence, full-feed blocking, IPv6 indicators, UDP flow inspection or a malware verdict.")
                     :Missing(id,ThreatFeed?.Summary??"Threat intelligence unavailable");
             case 7:
                 var model=SystemQueries.Wmi("root\\cimv2","SELECT Manufacturer,Model FROM Win32_ComputerSystem","Manufacturer","Model").FirstOrDefault();

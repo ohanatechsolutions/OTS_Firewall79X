@@ -79,7 +79,7 @@ public sealed class Engine : IDisposable
             {
                 lock(gate){if(!enabled&&resumeAt!=null&&resumeAt<=DateTimeOffset.UtcNow)Enable();}
                 bool active;lock(gate)active=enabled;
-                if(active){networkGuard?.Sweep(DateTimeOffset.UtcNow);await feed.RefreshIfDueAsync(ct);}
+                if(active){await feed.RefreshIfDueAsync(ct);networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);}
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
                 var interval=TimeSpan.FromSeconds(battery?90:30);
                 // Back off after observed high service CPU/memory without inventing per-layer attribution.
