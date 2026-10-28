@@ -40,9 +40,13 @@ begin
   Result := Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
 end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var Helper: String;
+var Helper, Sc: String; ExitCode: Integer;
 begin
   Result := '';
+  Sc := ExpandConstant('{sys}\\sc.exe');
+  Exec(Sc, 'stop OTSFirewall79XWatchdog', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Sleep(2500);
+  Exec(Sc, 'delete OTSFirewall79XWatchdog', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Helper := ExpandConstant('{app}\recovery\OTS.Firewall79X.Recovery.exe');
   if FileExists(Helper) then
     if not RunChecked(Helper, '--uninstall --quiet') then
@@ -61,16 +65,27 @@ begin
       RaiseException('Service recovery configuration failed.');
     if not RunChecked(Sc, 'start OTSFirewall79X') then
       RaiseException('Service could not start. Open the installer log and OTS Recovery.');
+    if not RunChecked(Sc, 'create OTSFirewall79XWatchdog binPath= "\"' + BinaryPath + '\" --watchdog" start= auto DisplayName= "OTS Firewall79X Independent Watchdog"') then
+      RaiseException('Independent watchdog service registration failed.');
+    if not RunChecked(Sc, 'failure OTSFirewall79XWatchdog reset= 86400 actions= restart/15000/restart/60000/restart/60000') then
+      RaiseException('Watchdog recovery configuration failed.');
+    if not RunChecked(Sc, 'start OTSFirewall79XWatchdog') then
+      RaiseException('Watchdog service could not start.');
   end;
 end;
 function InitializeUninstall(): Boolean;
+var ExitCode: Integer;
 begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop OTSFirewall79XWatchdog', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Sleep(2500);
   Result := RunChecked(ExpandConstant('{app}\recovery\OTS.Firewall79X.Recovery.exe'), '--uninstall --quiet');
   if not Result then MsgBox('Safe restoration failed. Uninstall has stopped so recovery files remain available.', mbError, MB_OK);
 end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var ExitCode: Integer;
 begin
-  if CurUninstallStep = usUninstall then
+  if CurUninstallStep = usUninstall then begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'delete OTSFirewall79X', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete OTSFirewall79XWatchdog', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  end;
 end;

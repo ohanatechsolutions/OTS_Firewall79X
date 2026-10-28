@@ -63,3 +63,11 @@ restart, identify rules beginning with **OTS Firewall79X temporary inbound sourc
 in Windows Defender Firewall with Advanced Security. Remove *only* rules with
 this exact prefix, or restart the OTS service to attempt owner-scoped cleanup.
 Do not disable the Windows Firewall to recover connectivity.
+
+## Native visibility additions
+
+Windows `GetExtendedUdpTable` now collects PID-attributed IPv4/IPv6 **bound UDP endpoints**, not UDP flows or inspected payloads. IPv6/UDP enumeration failure is exposed as unavailable rather than quietly counted as parity. The read-only Public-profile audit flags broad inbound SMB 139/445 allow rules; policy precedence, share configuration, and active network category still require verification. Native Bluetooth radio enumeration and `BluetoothIsDiscoverable` / `BluetoothIsConnectable` report radio state in addition to PnP inventory changes. These observations do not constitute pairing approval or authentication records.
+
+## Reactive observed Feodo intelligence restrictions
+
+An outbound TCP connection actually observed to a fresh, strictly parsed Feodo Tracker IPv4 endpoint may trigger one five-minute exact-destination Windows Firewall outbound deny rule (maximum 16). The service rechecks that the destination is not a local adapter, DNS, gateway or DHCP address; on expiration or feed staleness it removes its own rules in normal operation. It also cleans up on stack OFF/service restart. This is not proactive full-feed blocking, independently signed feed verification, IPv6 coverage, proof of malware, proof of blocked packets or guaranteed session termination. A hard service crash may leave a rule until recovery.

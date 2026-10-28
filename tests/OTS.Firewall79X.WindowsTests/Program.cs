@@ -49,6 +49,7 @@ try
     }
     finally { Directory.Delete(testRoot,true); }
 
+
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
     var started=DateTimeOffset.UtcNow;
     while(status.Dashboard.Time<started.AddSeconds(-5)||!status.Dashboard.Layers.Any(l=>l.CheckedAt!=null))
@@ -69,9 +70,14 @@ try
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
     var policy=new TemporaryFirewallGuard(new EventStore(Path.Combine(Path.GetTempPath(),"ots-network-guard-ci-"+Guid.NewGuid().ToString("N"))));
     policy.Start();
+    if(policy.BlockObservedIntelligence("127.0.0.1",DateTimeOffset.UtcNow) ||
+       policy.BlockObservedIntelligence("192.0.2.10",DateTimeOffset.UtcNow) ||
+       policy.BlockObservedIntelligence("::ffff:8.8.8.8",DateTimeOffset.UtcNow))
+       throw new Exception("Invalid intelligence destination passed allowlist");
     if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
     if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
     policy.Dispose();
+    var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
     {
