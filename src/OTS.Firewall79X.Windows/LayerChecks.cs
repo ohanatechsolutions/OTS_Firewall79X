@@ -9,7 +9,7 @@ public sealed class LayerChecks
     private readonly EventStore events;private readonly Dictionary<string,string> baselines=[];
     private Dictionary<string,string> neighbors=[];private HashSet<string> previousConnections=[];
     private readonly Dictionary<string,List<DateTimeOffset>> connectionsHistory=[];
-    private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start)> processSamples=[];
+    private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start,int Streak)> processSamples=[];
     public EventSensors? Sensors {get;set;}
     public FeodoThreatFeed? ThreatFeed {get;set;}
     private readonly HashSet<string> intelAlerts=[];
@@ -131,8 +131,13 @@ public sealed class LayerChecks
                 return Good(id,$"{remote.Count} recognized remote-management services",LayerMode.Monitoring,"Recognition list is not exhaustive.");
             case 24:return Channel(id,"Security","Monitors Windows time-change security events; independent network clock-drift measurement is not implemented.");
             case 25:
-                var services=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,StartMode FROM Win32_Service","Name","PathName","StartMode");Changed(id,"Service persistence",services);Changed(id,"Machine startup entries",SystemQueries.Startup());Changed(id,"Installed software",SystemQueries.InstalledSoftware());
-                return Good(id,$"{services.Count} services, machine Run keys, and installed software monitored",LayerMode.Monitoring,"Scheduled tasks and per-user browser extensions require additional coverage.");
+                var services=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,StartMode FROM Win32_Service","Name","PathName","StartMode");
+                var tasks=EndpointInventory.ScheduledTasks();var startup=EndpointInventory.UserStartup();
+                Changed(id,"Service persistence",services);Changed(id,"Machine startup entries",SystemQueries.Startup());
+                Changed(id,"Loaded user startup",startup);Changed(id,"Scheduled task files",tasks);
+                Changed(id,"Installed software",SystemQueries.InstalledSoftware());
+                return Good(id,$"{services.Count} services; {tasks.Count} task definitions; {startup.Count} loaded-user startup entries",LayerMode.Monitoring,
+                    "Snapshot-only; unloaded user hives, browser extension installs and transient tasks can be missed. Task files do not prove effective task configuration.");
             case 26:
                 var drivers=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,State FROM Win32_SystemDriver","Name","PathName","State");Changed(id,"Kernel driver inventory",drivers);
                 return Good(id,$"{drivers.Count} system drivers inventoried",LayerMode.Monitoring,"Driver changes and enabled CodeIntegrity events; no memory rootkit scanner or kernel attestation.");
@@ -140,10 +145,33 @@ public sealed class LayerChecks
             case 28:return Missing(id,"Camera/microphone privacy observation requires the interactive-user collector");
             case 29:
                 int high=0;var now=DateTimeOffset.UtcNow;var live=new HashSet<int>();
-                foreach(var p in Process.GetProcesses())using(p){try{live.Add(p.Id);var cpu=p.TotalProcessorTime;var start=p.StartTime.ToUniversalTime();if(processSamples.TryGetValue(p.Id,out var old)&&old.Start==start&&(now-old.Time).TotalSeconds>=1){double pct=(cpu-old.Cpu).TotalSeconds/(now-old.Time).TotalSeconds/Environment.ProcessorCount*100;if(pct>40){high++;events.Add(id,"Warning","High CPU utilization",$"{p.ProcessName}: {pct:F1}% across all logical processors; resource use alone does not identify a miner");}}processSamples[p.Id]=(cpu,now,start);}catch(System.ComponentModel.Win32Exception){}catch(InvalidOperationException){}}
+                foreach(var p in Process.GetProcesses())using(p)
+                {
+                    try
+                    {
+                        live.Add(p.Id);var cpu=p.TotalProcessorTime;var start=p.StartTime.ToUniversalTime();int streak=0;
+                        if(processSamples.TryGetValue(p.Id,out var old)&&old.Start==start&&(now-old.Time).TotalSeconds>=1)
+                        {
+                            double pct=(cpu-old.Cpu).TotalSeconds/(now-old.Time).TotalSeconds/Environment.ProcessorCount*100;
+                            if(pct>40){high++;streak=old.Streak+1;}
+                            if((streak==3||streak==4)&&EndpointSignals.MiningIndicator(p.ProcessName,streak,EndpointSignals.PoolPortSeen(p.Id,Connections)))
+                                events.Add(id,"Warning","Possible mining/resource-abuse indicator",
+                                    $"{Wire.Clean(p.ProcessName,64)} PID {p.Id}: sustained CPU and mining-associated process/port evidence; not a confirmed malware verdict.");
+                        }
+                        processSamples[p.Id]=(cpu,now,start,streak);
+                    }
+                    catch(System.ComponentModel.Win32Exception){}catch(InvalidOperationException){}
+                }
                 foreach(var pid in processSamples.Keys.Where(pid=>!live.Contains(pid)).ToArray())processSamples.Remove(pid);
-                return Good(id,$"{processSamples.Count} accessible processes sampled; {high} high-CPU observations",LayerMode.Monitoring,"Restricted/exited processes are skipped; no mining verdict from resource use alone.");
-            case 30:return Channel(id,"System","Monitors service changes and available security, Defender, CodeIntegrity, and PowerShell event channels.");
+                return Good(id,$"{processSamples.Count} accessible processes sampled; {high} current high-CPU observations",LayerMode.Monitoring,
+                    "Multiple high-CPU samples plus corroborating process/port metadata required. Common port values can be benign; restricted and short-lived miners are not covered.");
+            case 30:
+                var systemChannel=Channel(id,"System","Native Windows System event collector");
+                if(systemChannel.Mode==LayerMode.Unavailable)return systemChannel;
+                return Good(id,"System collector live; TaskScheduler/WMI="+
+                    (Sensors?.Has("Microsoft-Windows-TaskScheduler/Operational")==true?"TaskScheduler ":"")+
+                    (Sensors?.Has("Microsoft-Windows-WMI-Activity/Operational")==true?"WMI Activity":"not fully subscribed"),
+                    LayerMode.Monitoring,"Event channels and their audit policy can be disabled. No kernel ETW trace, complete process lifetime capture or event-loss attestation.");
             case 31:
                 if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security Event Log collector unavailable");
                 var coverage31=AuditPolicy.Coverage(31);
@@ -153,8 +181,12 @@ public sealed class LayerChecks
                     :Missing(id,"Windows File System auditing is enabled, but no browser credential read events have been observed. Matching file SACLs may be absent; no audit policy or SACL is silently changed.");
             case 32:return Missing(id,"Clipboard monitoring requires the interactive-user collector");
             case 33:
-                Changed(id,"Machine root trust store",SystemQueries.RootCertificates());var hosts=Path.Combine(Environment.SystemDirectory,"drivers","etc","hosts");if(File.Exists(hosts))Changed(id,"Hosts file",SystemQueries.FileHash(hosts));Changed(id,"Network DNS configuration",NetworkInterface.GetAllNetworkInterfaces().Select(n=>new{n.Id,Dns=n.GetIPProperties().DnsAddresses.Select(x=>x.ToString()).ToArray()}).ToArray());
-                return Good(id,"Root trust, hosts-file integrity, and interface DNS baselines monitored",LayerMode.Monitoring,"Changes are alerts, not automatically malicious. User proxy configuration requires user collector.");
+                var proxy=EndpointInventory.UserProxy();Changed(id,"Loaded-user proxy values",proxy);
+                Changed(id,"Machine root trust store",SystemQueries.RootCertificates());
+                var hosts=Path.Combine(Environment.SystemDirectory,"drivers","etc","hosts");if(File.Exists(hosts))Changed(id,"Hosts file",SystemQueries.FileHash(hosts));
+                Changed(id,"Network DNS configuration",NetworkInterface.GetAllNetworkInterfaces().Select(n=>new{n.Id,Dns=n.GetIPProperties().DnsAddresses.Select(x=>x.ToString()).ToArray()}).ToArray());
+                return Good(id,$"Trust/hosts/DNS baselines and {proxy.Count} loaded-user proxy values monitored",LayerMode.Monitoring,
+                    "Loaded-user profile scope; read-only polling can miss short-lived tampering. Captured values are fingerprinted, not logged.");
             case 34:
                 if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security Event Log collector unavailable");
                 var coverage34=AuditPolicy.Coverage(34);
@@ -163,24 +195,44 @@ public sealed class LayerChecks
                     ?Good(id,$"{Sensors.ObservedAuditedFileReads} authenticated Windows 4663 file-read audit events observed; per-process, distinct-file bursts correlated",LayerMode.Monitoring,"Alerts unusual read bursts only, with false-positive suppression. Actual copying, file sizes, encrypted upload, and exfiltration are not proven; only SACL-audited objects are visible.")
                     :Missing(id,"Object-access policy exists but there are no audited file reads. A suitable file SACL is necessary; no automatic SACL or audit policy changes are applied.");
             case 35:
-                var binaries=Directory.GetFiles(AppContext.BaseDirectory,"OTS*.dll");foreach(var file in binaries)Changed(id,Path.GetFileName(file),SystemQueries.FileHash(file));
-                return Good(id,$"Integrity baselines for {binaries.Length} OTS assemblies",LayerMode.Monitoring,"Baseline detects changes after first observation; authenticity and broad system-file coverage are separate requirements.");
-            case 36:return Channel(id,"Security","Examines process-creation command lines where already audited; detects a narrow set of encoded PowerShell and remote script execution indicators.");
+                var binaries=Directory.GetFiles(AppContext.BaseDirectory,"OTS*.dll");
+                var systemBinaries=new[]{"winlogon.exe","lsass.exe","services.exe"}
+                    .Select(name=>Path.Combine(Environment.SystemDirectory,name)).Where(File.Exists).ToArray();
+                foreach(var file in binaries.Concat(systemBinaries))Changed(id,"File integrity: "+file,SystemQueries.FileHash(file));
+                return Good(id,$"{binaries.Length} OTS assemblies and {systemBinaries.Length} core Windows binaries have sampled SHA-256 baselines",LayerMode.Monitoring,
+                    "Baselines start on first observation, are not cryptographically attested and are not persisted across service restarts. Other files and fast changes can be missed.");
+            case 36:return Channel(id,"Security","Analyzes real 4688 process creation: script-capable binaries, suspicious command lines, and Office-to-script parent/child chains where native audit supplies the parent.");
             case 37:
                 var secure=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State","UEFISecureBootEnabled");
                 var deviceState=DeviceStatus();
-                if(secure is not int v)return Missing(id,"Secure Boot state unavailable; "+deviceState.Evidence);
+                BootPolicyAudit.Result boot;
+                try{boot=EndpointInventory.BootOptions();}catch(Exception ex){boot=new(false,false,"BCD read unavailable: "+Wire.Clean(ex.Message,120));}
+                if(boot.WeakeningDetected)return Bad(id,boot.Evidence+"; "+deviceState.Evidence,"Read-only BCD risk finding; OS configuration not modified.");
+                if(secure is not int v)return Missing(id,"Secure Boot state unavailable; "+boot.Evidence+"; "+deviceState.Evidence);
                 if(v!=1)return Bad(id,"Secure Boot disabled; "+deviceState.Evidence,"TPM and OS encryption are read-only observations, not boot-chain attestation.");
                 if(deviceState.TpmEnabled==false)return Bad(id,"Secure Boot enabled, TPM disabled/inactive; "+deviceState.Evidence,"Read-only WMI and registry evidence; firmware and boot attestations still needed.");
-                return Good(id,"Secure Boot enabled; "+deviceState.Evidence,LayerMode.Auditing,"Unknown TPM/encryption does not establish protection. No measured-boot attestation or firmware integrity verification.");
-            case 38:return Missing(id,"Reliable cross-process keylogger/input-hook inspection is not implemented; no claim of keylogger protection.");
+                return Good(id,"Secure Boot enabled; "+boot.Evidence+"; "+deviceState.Evidence,LayerMode.Auditing,
+                    "BCD parsing is not boot attestation and localizable output may be unsupported. No firmware integrity or measured-boot attestation.");
+            case 38:
+                if(Sensors?.Has("Microsoft-Windows-Windows Defender/Operational")!=true)
+                    return Missing(id,"Defender detection event channel unavailable; keylogger/input-hook visibility unverified.");
+                return Good(id,$"Microsoft Defender malware channel subscribed; keylogging-labelled detections: {Sensors.ObservedKeyloggerAlerts}",
+                    LayerMode.Monitoring,"Recognized Defender detections only. Does not enumerate input hooks, record keystrokes, or detect arbitrary keyloggers; major capability remains unimplemented.");
             case 39:
-                Changed(id,"Trusted publisher roots",SystemQueries.RootCertificates());Changed(id,"Software source inventory",SystemQueries.InstalledSoftware());
-                return Good(id,"Trust-store and installed-software changes observed",LayerMode.Auditing,"Does not validate package repository metadata or every software update source.");
+                var sources=EndpointInventory.SoftwareSources();
+                Changed(id,"Trusted publisher roots",SystemQueries.RootCertificates());
+                Changed(id,"Windows Update/AppInstaller policy sources",sources);
+                Changed(id,"Software source inventory",SystemQueries.InstalledSoftware());
+                return Good(id,$"Root store, installed software, and {sources.Count} update-source policy values fingerprinted",LayerMode.Auditing,
+                    "Policy inventory is not actual publisher-signature verification or comprehensive user package-source validation.");
             case 40:
                 var container=SystemQueries.Wmi("root\\cimv2","SELECT Name,State FROM Win32_Service WHERE Name='docker' OR Name='com.docker.service' OR Name='containerd'","Name","State");
                 if(NetworkError!=null)return Missing(id,"Container management listener inspection unavailable: "+NetworkError);
                 var endpoints=ContainerManagementAudit.Analyze(Connections.Where(c=>c.State=="Listening").Select(c=>c.Local),container.Count>0);
+                var containerConfig=EndpointInventory.Container();
+                Changed(id,"Docker daemon config",containerConfig.Daemon);
+                if(containerConfig.Daemon.UnverifiedTcpHost)
+                    return Bad(id,containerConfig.Daemon.Evidence,"Configuration is not proof of an active listener; validate effective Docker flags and TLS settings.");
                 if(endpoints.PlaintextCandidates>0)
                 {
                     events.Add(id,"High","Potential unauthenticated container-management endpoint",
@@ -188,9 +240,10 @@ public sealed class LayerChecks
                     return Bad(id,$"Possible plaintext container API: {endpoints.PlaintextCandidates} TCP 2375 listeners; {endpoints.RemotePlaintextCandidates} non-loopback addresses",
                         "Port-based observation, not definitive Docker identification. Even loopback APIs can be unsafe. No socket probe, policy change or block performed.");
                 }
-                if(!endpoints.ObservedAnyDockerService&&endpoints.TlsCandidates==0)return Na(id,"No recognized Docker/containerd service or common 2375/2376 management listener detected; WSL/remote engines not assessed");
-                return Good(id,$"{container.Count} container service records; {endpoints.TlsCandidates} possible TLS management listeners (TCP 2376); no TCP 2375 detected",
-                    LayerMode.Auditing,"TCP 2376 does not prove TLS or certificate verification. Container privilege, bind mounts, WSL2 port forwarding and service pipe ACLs require additional checks.");
+                if(!endpoints.ObservedAnyDockerService&&endpoints.TlsCandidates==0&&containerConfig.Distros==0&&!containerConfig.Daemon.Parsed)
+                    return Na(id,"No recognized container service, management listener, loaded-user WSL installation or Docker daemon configuration observed; this is not a complete remote engine search.");
+                return Good(id,$"{container.Count} services; {containerConfig.Distros} loaded-user WSL distributions; {endpoints.TlsCandidates} possible TLS listeners; "+containerConfig.Daemon.Evidence,
+                    LayerMode.Auditing,"No effective daemon query, published-container-port audit, named-pipe ACL or WSL2 port-forwarding proof. TCP 2376 does not prove TLS.");
             case 41:return Channel(id,"Security","Alerts on eight failed logins per source in two minutes; automatic source bans withheld to avoid lockout.");
             case 42:
                 var config=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ssh","sshd_config");
