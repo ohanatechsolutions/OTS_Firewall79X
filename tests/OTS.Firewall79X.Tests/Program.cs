@@ -632,6 +632,42 @@ Test("Section G: malformed DNS, feed and retained-log corpus remains bounded",()
     Assert(!detector.Observe(new string('A',8192),"8.8.8.8","0",now).ParsedAddressAnswer);
     Assert(!detector.Observe("external.example",new string('A',8192),"0",now).ParsedAddressAnswer);
 });
+Test("WFP 5157 endpoint roles use remote DestAddress and local SourcePort",()=>{
+    Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","6",out var evt));
+    Assert(evt!=null&&evt.RemoteAddress=="8.8.8.8"&&evt.LocalPort==445&&evt.RemotePort==50420);
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14593","192.168.1.10","445","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","17",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","0","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","127.0.0.1","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","0.0.0.0","445","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","203.0.113.7","50420","6",out _));
+    Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","2001:db8::10","3389","2606:4700:4700::1111","52880","6",out var v6)&&v6?.LocalPort==3389);
+});
+Test("IPv4/IPv6 packet parser fails closed on malformed headers, not truncated captures",()=>{
+    byte[] ipv4=new byte[40];
+    ipv4[0]=0x45;ipv4[2]=0;ipv4[3]=40;ipv4[8]=64;ipv4[9]=6;
+    ipv4[12]=192;ipv4[13]=0;ipv4[14]=2;ipv4[15]=1;
+    ipv4[16]=198;ipv4[17]=51;ipv4[18]=100;ipv4[19]=1;
+    ipv4[32]=0x50;
+    uint sum=0;for(int i=0;i<20;i+=2)sum+=(uint)((ipv4[i]<<8)|ipv4[i+1]);
+    while((sum>>16)!=0)sum=(sum&65535)+(sum>>16);
+    ushort checksum=(ushort)~sum;ipv4[10]=(byte)(checksum>>8);ipv4[11]=(byte)checksum;
+    Assert(IpPacketValidator.Inspect(ipv4).Status==IpPacketValidator.Verdict.Valid);
+    var truncated=ipv4.AsSpan(0,28).ToArray();
+    Assert(IpPacketValidator.Inspect(truncated).Status==IpPacketValidator.Verdict.Unsupported);
+    var broken=(byte[])ipv4.Clone();broken[8]=63;
+    Assert(IpPacketValidator.Inspect(broken).Status==IpPacketValidator.Verdict.Malformed);
+    broken=(byte[])ipv4.Clone();broken[6]=0xE0;
+    Assert(IpPacketValidator.Inspect(broken).Status==IpPacketValidator.Verdict.Malformed);
+    byte[] ipv6=new byte[48];ipv6[0]=0x60;ipv6[4]=0;ipv6[5]=8;ipv6[6]=17;ipv6[7]=64;ipv6[44]=0;ipv6[45]=8;
+    Assert(IpPacketValidator.Inspect(ipv6).Status==IpPacketValidator.Verdict.Valid);
+    ipv6[45]=9;Assert(IpPacketValidator.Inspect(ipv6).Status==IpPacketValidator.Verdict.Malformed);
+    ipv6[45]=8;ipv6[6]=50;Assert(IpPacketValidator.Inspect(ipv6).Status==IpPacketValidator.Verdict.Unsupported);
+    byte[] fragmented=new byte[48];fragmented[0]=0x60;fragmented[5]=8;fragmented[6]=44;fragmented[40]=59;
+    Assert(IpPacketValidator.Inspect(fragmented).Status==IpPacketValidator.Verdict.Valid);
+    fragmented[42]=0;fragmented[43]=2;
+    Assert(IpPacketValidator.Inspect(fragmented).Status==IpPacketValidator.Verdict.Malformed);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 

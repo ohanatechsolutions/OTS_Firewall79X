@@ -24,6 +24,7 @@ public sealed class LayerChecks
     public string? NetworkError {get;private set;}
     public string? UdpError {get;private set;}
     private bool? bluetoothDiscoverable;
+    private Dictionary<string,(bool Authenticated,bool Connected)>? lastBluetoothDevices;
     public FirewallAudit? Firewall {get;}=new();
     private (bool Safe,string Description,List<FirewallAudit.Rule> Rules)? firewall;
     public LayerChecks(EventStore events){this.events=events;}
@@ -148,8 +149,24 @@ public sealed class LayerChecks
                 if(visible&&bluetoothDiscoverable!=true)
                     events.Add(10,"Warning","Bluetooth radio discoverable","Windows native API reports a discoverable local Bluetooth radio; verify whether discovery is intentional.");
                 bluetoothDiscoverable=visible;
-                return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence,LayerMode.Monitoring,
-                    "Native discovery/connectability and PnP changes are monitored; pairing authorization and authenticated remote connections are not independently confirmed.");
+                var paired=BluetoothDeviceAudit.Read();
+                if(!paired.Available)return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence,LayerMode.Monitoring,
+                    "Bluetooth Classic device state unavailable: "+paired.Evidence+"; Bluetooth LE is not independently monitored.");
+                var currentDevices=paired.Devices.ToDictionary(x=>x.Id,x=>(x.Authenticated,x.Connected),StringComparer.OrdinalIgnoreCase);
+                if(lastBluetoothDevices!=null)
+                    foreach(var device in currentDevices.Take(256))
+                    {
+                        var previous=lastBluetoothDevices.GetValueOrDefault(device.Key);
+                        if(!lastBluetoothDevices.ContainsKey(device.Key)&&device.Value.Authenticated)
+                            events.Add(10,"Warning","New paired Bluetooth Classic device",
+                                "Paired device fingerprint "+SystemQueries.Fingerprint(device.Key)[..16]+"; Windows cache change does not establish authorization.");
+                        if(device.Value.Connected&&(!lastBluetoothDevices.ContainsKey(device.Key)||!previous.Connected))
+                            events.Add(10,"Warning","Bluetooth Classic device became connected",
+                                "Connection fingerprint "+SystemQueries.Fingerprint(device.Key)[..16]+"; verify this is expected.");
+                    }
+                lastBluetoothDevices=currentDevices;
+                return Good(id,$"{bt.Count} Bluetooth PnP entries; "+radio.Evidence+"; "+paired.Evidence,LayerMode.Monitoring,
+                    "Paired/connected flags are Windows cached Classic device reports, not active BLE monitoring or proof of authorization.");
             case 11:case 12:case 13:return Missing(id,"Deception monitor has not reported health");
             case 14:return Missing(id,"An established packet intrusion-detection engine and validated network signature set are not yet integrated.");
             case 15:return Channel(id,"Security","Classifies supported Windows authentication, privilege, and blocked-connection events; broad ATT&CK correlation is incomplete.");
