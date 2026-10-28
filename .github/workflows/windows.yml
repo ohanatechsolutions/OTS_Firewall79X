@@ -52,10 +52,33 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          lfs: false
+          persist-credentials: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: OTS-Firewall79X-Windows-x64
           path: downloaded
+      - name: Synchronize tested installer and checksum into installer/ (Git LFS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s downloaded/release/OTS-Firewall79X-Setup.exe
+          test -s downloaded/release/OTS-Firewall79X-Setup.exe.sha256
+          git lfs install --local
+          test "$(git check-attr filter -- installer/OTS-Firewall79X-Setup.exe)" = "installer/OTS-Firewall79X-Setup.exe: filter: lfs"
+          cp downloaded/release/OTS-Firewall79X-Setup.exe installer/OTS-Firewall79X-Setup.exe
+          cp downloaded/release/OTS-Firewall79X-Setup.exe.sha256 installer/OTS-Firewall79X-Setup.exe.sha256
+          ( cd installer && sha256sum --check OTS-Firewall79X-Setup.exe.sha256 )
+          git add -- installer/OTS-Firewall79X-Setup.exe installer/OTS-Firewall79X-Setup.exe.sha256
+          git lfs ls-files | grep -F 'installer/OTS-Firewall79X-Setup.exe'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git diff --cached --quiet; then
+            git commit -m 'build: synchronize verified Windows installer [skip ci]'
+            git push origin HEAD:refs/heads/main
+          fi
       - name: Publish verified development prerelease
         env:
           GH_TOKEN: ${{ github.token }}

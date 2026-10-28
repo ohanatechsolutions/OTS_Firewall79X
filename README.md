@@ -8,6 +8,8 @@ Native Windows desktop security application by **Ohana Tech Solutions**.
 
 When a verified release is available, download `OTS-Firewall79X-Windows-x64.zip` from [Releases](https://github.com/ohanatechsolutions/OTS_Firewall79X/releases), extract it, and run `OTS-Firewall79X-Setup.exe`. The ZIP contains a compiled installer, not just source code. Approve Windows UAC, open the desktop shortcut, and select **Turn ON**. The installer bundles the .NET runtime and registers the background service. No SDK, Python, Docker, account, API key, browser extension, or manual component setup is required.
 
+After a passing Windows CI build, the [`installer/`](installer/) directory also contains `OTS-Firewall79X-Setup.exe` (tracked with Git LFS) and `OTS-Firewall79X-Setup.exe.sha256` (its matching SHA-256 hash). Clone with Git LFS enabled to obtain the executable from the repository. GitHub-generated source archives contain LFS pointers unless LFS objects are explicitly included in repository archive settings; the standalone installer in [Releases](https://github.com/ohanatechsolutions/OTS_Firewall79X/releases) is the simplest download. From the `installer` folder, verify the download with `Get-FileHash .\OTS-Firewall79X-Setup.exe -Algorithm SHA256` and compare it with the `.sha256` file.
+
 The current preview is unsigned. Its build/install verification status is documented in [TEST_RESULTS.md](TEST_RESULTS.md). Do not treat a checksum as publisher authentication.
 
 ## Implemented behavior
