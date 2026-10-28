@@ -7,11 +7,12 @@ namespace OTS.Firewall79X.Windows;
 public static class Ipc
 {
     public const string PipeName="OTS.Firewall79X.v1";
-    public static async Task<Response> SendAsync(string command,CancellationToken ct=default)
+    public static Task<Response> SendAsync(string command,CancellationToken ct=default)=>SendAsync(new Request(command),ct);
+    public static async Task<Response> SendAsync(Request request,CancellationToken ct=default)
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(20));
         using var pipe=new NamedPipeClientStream(".",PipeName,PipeDirection.InOut,PipeOptions.Asynchronous,TokenImpersonationLevel.Impersonation);
-        await pipe.ConnectAsync(timeout.Token);PipeServerIdentity.Verify(pipe.SafePipeHandle);await Wire.WriteAsync(pipe,new Request(command),timeout.Token);
+        await pipe.ConnectAsync(timeout.Token);PipeServerIdentity.Verify(pipe.SafePipeHandle);await Wire.WriteAsync(pipe,request,timeout.Token);
         return await Wire.ReadAsync<Response>(pipe,4*1024*1024,timeout.Token);
     }
     public static async Task ServeAsync(Func<Request,Response> handle,Action<Exception> error,CancellationToken ct)
