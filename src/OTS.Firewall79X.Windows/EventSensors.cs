@@ -11,6 +11,7 @@ public sealed class EventSensors : IDisposable
     private readonly Dictionary<string,Queue<DateTimeOffset>> failures=[];
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
+    public DeceptionMonitor? Deception { get; set; }
     private int parsedDnsResponses;
     public int ObservedDnsResponses=>Volatile.Read(ref parsedDnsResponses);
     private int fileReadEvents, browserFileEvents;
@@ -25,7 +26,7 @@ public sealed class EventSensors : IDisposable
         Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
         Watch("Microsoft-Windows-PowerShell/Operational","*[System[(EventID=4104)]]");
-        Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3008)]]");
+        Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3006 or EventID=3008)]]");
     }
     private void Watch(string channel,string query)
     {
@@ -63,6 +64,7 @@ public sealed class EventSensors : IDisposable
                 case 4672:case 4720:case 4728:case 4732:case 4719:events.Add(27,"Warning","Account or privilege event",$"Security event {record.Id}; review Windows Security log for account details");break;
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
                 case 4663:
+                    Deception?.ObserveFileAudit(Get("ObjectType"), Get("ObjectName"), Get("AccessMask"), Get("ProcessName"), Get("ProcessId"), Get("SubjectUserName"));
                     AuditedFileAccess.Finding found;
                     lock(sync)found=access.Observe(Get("ObjectType"),Get("ObjectName"),Get("ProcessName"),Get("AccessMask"),now);
                     if(found.AuditedRead)Interlocked.Increment(ref fileReadEvents);
@@ -86,6 +88,8 @@ public sealed class EventSensors : IDisposable
         else if(channel.Contains("PowerShell")){var text=Get("ScriptBlockText");var indicator=Detections.ExecutionIndicator("powershell.exe",text);if(indicator!=null)events.Add(36,"Warning","PowerShell indicator",indicator);}
         else if(channel.Contains("DNS-Client"))
         {
+            Deception?.ObserveDnsQuery(Get("QueryName"));
+            if(record.Id != 3008) return; // Query starts are canary observations, not parsed DNS responses.
             DnsRebindingDetector.Finding finding;
             lock(sync)finding=dnsRebinding.Observe(Get("QueryName"),Get("QueryResults"),Get("QueryStatus"),now);
             if(finding.ParsedAddressAnswer)Interlocked.Increment(ref parsedDnsResponses);
