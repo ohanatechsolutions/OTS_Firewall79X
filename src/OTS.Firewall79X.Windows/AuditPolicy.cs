@@ -23,6 +23,7 @@ public static class AuditPolicy
             24 => [("9210",1,"Security State Change")],
             27 => [("9235",1,"User Account Management"),("9237",1,"Security Group Management"),("921B",1,"Special Logon"),("922F",1,"Audit Policy Change")],
             36 => [("922B",1,"Process Creation")],
+            31 or 34 => [("921D",1,"File System successful object access")],
             41 => [("9215",2,"Logon failures")],
             45 => [("9215",3,"Logon success/failure"),("921B",1,"Special Logon")],
             _ => []

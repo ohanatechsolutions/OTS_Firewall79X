@@ -9,11 +9,15 @@ public sealed class EventSensors : IDisposable
     private readonly List<EventLogWatcher> watchers=[];private readonly EventStore events;
     private readonly object sync=new();private readonly Dictionary<string,Queue<(DateTimeOffset Time,int Port)>> attempts=[];
     private readonly Dictionary<string,Queue<DateTimeOffset>> failures=[];
+    private readonly AuditedFileAccess access=new();
+    private int fileReadEvents, browserFileEvents;
+    public int ObservedAuditedFileReads=>Volatile.Read(ref fileReadEvents);
+    public int ObservedAuditedBrowserFileReads=>Volatile.Read(ref browserFileEvents);
     public System.Collections.Concurrent.ConcurrentDictionary<string,string> Health {get;}=new();
     public EventSensors(EventStore events){this.events=events;}
     public void Start()
     {
-        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4672 or EventID=4720 or EventID=4728 or EventID=4732 or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616)]]");
+        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4672 or EventID=4720 or EventID=4728 or EventID=4732 or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
         Watch("System","*[System[(EventID=7045 or EventID=7040)]]");
         Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
@@ -55,6 +59,18 @@ public sealed class EventSensors : IDisposable
                     lock(sync){var ip=Get("IpAddress");if(failures.Count>4096)failures.Clear();if(!failures.TryGetValue(ip,out var q))failures[ip]=q=new();q.Enqueue(now);while(q.Count>0&&q.Peek()<now.AddMinutes(-2))q.Dequeue();if(q.Count>=8)events.Add(41,"High","Repeated failed authentication",$"{q.Count} failures from {ip} within 2 minutes; no automatic ban");}break;
                 case 4672:case 4720:case 4728:case 4732:case 4719:events.Add(27,"Warning","Account or privilege event",$"Security event {record.Id}; review Windows Security log for account details");break;
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
+                case 4663:
+                    AuditedFileAccess.Finding found;
+                    lock(sync)found=access.Observe(Get("ObjectType"),Get("ObjectName"),Get("ProcessName"),Get("AccessMask"),now);
+                    if(found.AuditedRead)Interlocked.Increment(ref fileReadEvents);
+                    if(found.BrowserCredentialRead)Interlocked.Increment(ref browserFileEvents);
+                    if(found.UnexpectedCredentialReader)
+                        events.Add(31,"Warning","Audited browser credential file access",
+                            $"An unexpected process ({Wire.Clean(Path.GetFileName(Get("ProcessName")),64)}) read a browser credential/session file; check the Windows Security log. No secrets were collected.");
+                    if(found.BulkRead)
+                        events.Add(34,"Warning","Bulk audited file-read indicator",
+                            $"{found.DistinctFiles} distinct files accessed by one process within one minute; backups and indexing can be legitimate. Copy/exfiltration has not been proven.");
+                    break;
                 case 4688:var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"));if(indicator!=null)events.Add(36,"Warning","Suspicious execution indicator",indicator);break;
                 case 5157:
                     var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);

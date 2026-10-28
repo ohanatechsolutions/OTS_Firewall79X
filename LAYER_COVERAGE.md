@@ -96,3 +96,10 @@
 ## Follow-up — Feodo C2 observation (2026-10-27)
 
 Layer 5 now compares sampled established TCP destinations with a strictly validated *recommended* public Feodo Tracker C2 IPv4 list, if current; layer 63 reports source age, errors and freshness. Neither feature adds a firewall rule or replaces a packet-level, signed-feed blocking engine; the mandatory full requirements are not complete. Tests include invalid, private, missing-timestamp and stale entries.
+
+
+## Follow-up — conditional file-read telemetry (2026-10-27)
+
+- Layer 31 now correlates **real** Security Event ID 4663 file-read access against supported Chromium/Firefox credential/session storage paths, highlighting unexpected reading processes without reading credentials. Conditional operation requires existing successful File System auditing and suitable SACLs.
+- Layer 34 now correlates 64 distinct SACL-audited files read by one process within one minute, with bounded in-memory SHA-256 path fingerprints and alert suppression. A read burst is **not** proof of copying or exfiltration, and does not inspect network payloads.
+- On Windows installations without object-access policy and file SACLs, these layers truthfully remain unavailable. They are **not** certified as meeting their full security specification.
