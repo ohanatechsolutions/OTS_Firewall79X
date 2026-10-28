@@ -12,7 +12,7 @@
 | 49 External Exposure Assessment | Local TCP listener/nonloopback and management-port visibility. Optional desktop button (explicit consent) queries api4.ipify.org and Shodan InternetDB for third-party historical observations, never claims live reachability. | Authorized genuine external network observer is NOT configured. Current implementation cannot claim externally reachable services or absence of exposure. |
 | 50 Secrets Hygiene Scanner | Authorized selected folder only; category/path-only findings; bounded 5,000 files, 256 KiB/file, 64 MiB total, 2 minutes, 2,500 indicators; reparse avoidance and generated-tree exclusions; more token patterns. | Reparse race/ACL/encoding and fixture tests, customizable exclusions, false-positive validation, encrypted report export as needed. |
 | 51 Remote Feature and Hardware Audit | RDP/Remote Assistance, device wake WMI, Intel local service, DMA policy, nonloopback management-port indicators. | AMT firmware provisioning, actual DMA hardware capability, magic-packet behavior, BIOS/UEFI and external reachability. |
-| 52 Updates and Vulnerability Assessment | Background read-only Windows Update Agent search for missing non-hidden software updates; severity count where provided; six-hour cache and honest provider failures. | VERIFIED THIRD-PARTY CVE CORRELATION IS NOT IMPLEMENTED: requires trusted advisory data, package/version identity, fixed-version mapping and stale-data checks. Driver/firmware vendor inventories require hardware tests. |
+| 52 Updates and Vulnerability Assessment | Background read-only Windows Update Agent search for missing non-hidden software updates with explicit errors; optional, consent-based OSV.dev NuGet advisory lookup of exact package versions from a selected packages.lock.json (no source code or local path sent). | OSV NuGet coverage is package-specific, optional, and limited by published advisories and pagination; full installed-software/CVE mapping, fresh-feed attestation, fixed-version correlation and robust severity interpretation remain incomplete. Driver/firmware vendor inventories require hardware tests. |
 
 ## Safety contract
 
@@ -20,7 +20,7 @@ No Windows firewall rules, Defender settings, BitLocker protectors, browser poli
 
 ## Validation added
 
-Core unit tests cover detection categories without plaintext, binary/placeholder negative cases, and restoration/conflict preservation with multiple journal entries. Windows integration tests check all three hardening DWORDs, host-evidence availability, management-port classification, local versus external exposure disclaimers, and Windows Update provider status. Installer smoke tests check that all original hardening DWORD values are restored.
+Core unit tests cover detection categories without plaintext, binary/placeholder negative cases, browser extension capability fixtures, NuGet lockfile parsing and hostile inputs, and restoration/conflict preservation with multiple journal entries. Windows integration tests check all three hardening DWORDs, host-evidence availability, management-port classification, local versus external exposure disclaimers, and Windows Update provider status. Installer smoke tests check that all original hardening DWORD values are restored.
 
 **Not yet run or passed by this document alone:** real Windows hosted workflow after this branch, physical Windows 10 and Windows 11 Home tests, managed browser profiles, actual external scanning, authorized firmware controls, third-party CVE evidence, and full source/hardware acceptance.
 
