@@ -93,7 +93,7 @@ public partial class MainWindow : Window
     private void LayerSelected(object sender,SelectionChangedEventArgs e){if(LayerGrid.SelectedItem is Row r)StatusLine.Text=$"Layer {r.Id}: {r.Evidence}";}
     private void SecurityClick(object sender,RoutedEventArgs e){try{Process.Start(new ProcessStartInfo("windowsdefender:"){UseShellExecute=true});}catch(Exception ex){MessageBox.Show(ex.Message);}}
     private async void UserMonitoringChanged(object sender,RoutedEventArgs e){if(!ready)return;if(UserMonitoring.IsChecked!=true){userMonitor?.Dispose();userMonitor=null;}await Refresh();}
-    private string? Report()=>dashboard==null?null:Reports.Generate(dashboard);
+    private string? Report()=>dashboard==null?null:Reports.Generate(dashboard)+"\n\n"+SecurityDossier.Generate(dashboard);
     private void ReportClick(object sender,RoutedEventArgs e)
     {
         var report=Report();if(report==null){MessageBox.Show("No service report available yet.");return;}
@@ -153,6 +153,10 @@ public partial class MainWindow : Window
         byte[]? plain=null;
         try{plain=SecureArchive.Decrypt(open.FileName,ArchivePassword.Password);var save=new SaveFileDialog{Filter="Restored report|*.md",FileName="OTS-Restored-Report.md"};if(save.ShowDialog()==true){File.WriteAllBytes(save.FileName,plain);StatusLine.Text="Archive authenticated and restored to your chosen file.";}}catch(Exception ex){MessageBox.Show("Archive restore failed: "+ex.Message);}finally{if(plain!=null)CryptographicOperations.ZeroMemory(plain);ArchivePassword.Clear();}
     }
+    private async void ScheduleBackupClick(object sender,RoutedEventArgs e)=>await Command("configure-backup");
+    private async void ConfigureLogShippingClick(object sender,RoutedEventArgs e)=>await Command("configure-export");
+    private async void DisableScheduledBackupClick(object sender,RoutedEventArgs e)=>await Command("disable-backup");
+    private async void DisableLogShippingClick(object sender,RoutedEventArgs e)=>await Command("disable-export");
     private async void FolderBackupClick(object sender,RoutedEventArgs e)
     {
         var folder=new OpenFolderDialog{Title="Select the folder to encrypt (60 MiB maximum)"};if(folder.ShowDialog()!=true)return;
