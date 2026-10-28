@@ -10,6 +10,8 @@ foreach ($name in @('App','Service','Recovery')) {
   $output = "artifacts/publish/$($name.ToLowerInvariant())"
   Native { dotnet publish "src/OTS.Firewall79X.$name/OTS.Firewall79X.$name.csproj" -c Release -r win-x64 --self-contained true -p:RuntimeFrameworkVersion=10.0.14 -o $output }
 }
+# Signing must occur before the inventory hashes are recorded.
+if ($env:OTS_RELEASE_CHANNEL -eq 'production') { & ./scripts/sign-release.ps1 -Stage payload }
 $components = @{}
 Get-ChildItem src -Recurse -Filter project.assets.json | ForEach-Object {
   $assets = Get-Content $_.FullName -Raw | ConvertFrom-Json
@@ -27,6 +29,7 @@ $manifest | ConvertTo-Json -Depth 6 | Set-Content artifacts/BUILD_MANIFEST.json 
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $iscc)) { throw 'Inno Setup 6 compiler unavailable on this Windows build host' }
 Native { & $iscc installer/Firewall79X.iss }
+if ($env:OTS_RELEASE_CHANNEL -eq 'production') { & ./scripts/sign-release.ps1 -Stage installer }
 $exe = 'artifacts/release/OTS-Firewall79X-Setup.exe'
 if (-not (Test-Path $exe)) { throw 'Compiled installer missing' }
 $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
