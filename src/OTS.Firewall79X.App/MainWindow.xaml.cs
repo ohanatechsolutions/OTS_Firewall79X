@@ -19,7 +19,7 @@ public partial class MainWindow : Window
     private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
     public MainWindow()
     {
-        InitializeComponent();ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};
+        InitializeComponent();SourceInitialized+=(_,_)=>NativeChrome.Apply(this);ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};
     }
     private async Task Refresh()
     {
@@ -45,7 +45,10 @@ public partial class MainWindow : Window
             SystemHealthText.Text=$"Service responded at {DateTimeOffset.Now:g}. "+(dashboard.ResumeAt.HasValue?$"Automatic resume: {dashboard.ResumeAt.Value.ToLocalTime():g}":"");
             if(notifications!=null&&!notifications.Ready)SystemHealthText.Text+=" Desktop notification registration is unavailable; use Threat Activity for alerts.";
             rows=dashboard.Layers.Select(l=>{var def=Catalog.All.Single(d=>d.Id==l.Id);return new Row(l.Id,def.Name,def.Category,l.Mode.ToString(),l.Healthy?"Operational":"Attention / idle",l.Evidence+(l.Limitation.Length>0?" — "+l.Limitation:""),l.DurationMs);}).ToList();Filter();
-            EventGrid.ItemsSource=dashboard.Events;NetworkGrid.ItemsSource=dashboard.Connections;
+            EventGrid.ItemsSource=dashboard.Events;RecentEvents.ItemsSource=dashboard.Events.Take(5).ToArray();
+            RecentEmpty.Visibility=ActivityEmpty.Visibility=dashboard.Events.Count==0?Visibility.Visible:Visibility.Collapsed;
+            ShieldState.Text=stale?"STALE":dashboard.Enabled?"LIMITED":"OFF";
+            NetworkGrid.ItemsSource=dashboard.Connections;
             var high=dashboard.Events.Where(e=>e.Severity=="High"&&e.Time>lastAlert).OrderByDescending(e=>e.Time).FirstOrDefault();
             if(high!=null)
             {
@@ -54,7 +57,7 @@ public partial class MainWindow : Window
             }
             StatusLine.Text=stale?"Service has not completed a recent health cycle. Do not rely on the displayed score.":"Connected to local service. Administrator approval is requested only for protected operations.";
         }
-        catch(Exception ex){ProtectionText.Text="Service unavailable — protection status unknown";ScoreText.Text="Unknown";StatusLine.Text=ex.Message+". Use Recovery if the service cannot start.";}
+        catch(Exception ex){ShieldState.Text="UNAVAILABLE";ProtectionText.Text="Service unavailable — protection status unknown";ScoreText.Text="Unknown";StatusLine.Text=ex.Message+". Use Recovery if the service cannot start.";}
         finally{refreshing=false;}
     }
     private async Task Command(string command)
@@ -72,7 +75,7 @@ public partial class MainWindow : Window
     private async void RestoreClick(object sender,RoutedEventArgs e)=>await Command("restore");
     private async void SelfTestClick(object sender,RoutedEventArgs e)=>await Command("selftest");
     private async void RefreshClick(object sender,RoutedEventArgs e)=>await Refresh();
-    private void LayerSearchChanged(object sender,TextChangedEventArgs e){if(ready)Filter();}
+    private void LayerSearchChanged(object sender,TextChangedEventArgs e){if(ready){Filter();if(LayerSearch.Text.Length>0)MainTabs.SelectedIndex=1;}}
     private void Filter(){var q=LayerSearch.Text.Trim();LayerGrid.ItemsSource=rows.Where(r=>$"{r.Id} {r.Name} {r.Category} {r.Evidence}".Contains(q,StringComparison.OrdinalIgnoreCase)).ToArray();}
     private void LayerSelected(object sender,SelectionChangedEventArgs e){if(LayerGrid.SelectedItem is Row r)StatusLine.Text=$"Layer {r.Id}: {r.Evidence}";}
     private void SecurityClick(object sender,RoutedEventArgs e){try{Process.Start(new ProcessStartInfo("windowsdefender:"){UseShellExecute=true});}catch(Exception ex){MessageBox.Show(ex.Message);}}

@@ -40,6 +40,7 @@ jobs:
             artifacts/windows-observed-status.json
             artifacts/vulnerability-report.json
             artifacts/*.log
+            artifacts/ui/
           if-no-files-found: error
           retention-days: 30
 

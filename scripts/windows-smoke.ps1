@@ -25,6 +25,7 @@ Check 'Clean install with bundled runtimes' { RunExe $setup '/VERYSILENT /SUPPRE
 Check 'Real PE application and recovery binaries installed' { foreach ($file in @("$root\OTS Firewall79X.exe", $helper, "$root\service\OTS.Firewall79X.Service.exe")) { $b=[IO.File]::ReadAllBytes($file);if($b[0] -ne 77 -or $b[1] -ne 90){throw "Not PE: $file"} } }
 Check 'UI launches and remains alive' { $ui=Start-Process "$root\OTS Firewall79X.exe" -PassThru;Start-Sleep -Seconds 5;if($ui.HasExited){throw 'UI exited unexpectedly'};Stop-Process -Id $ui.Id }
 Check 'One-click activation' { RunExe $helper '--on --quiet';Start-Sleep -Seconds 8;if((Get-Service OTSFirewall79X).Status -ne 'Running'){throw 'Service stopped after activation'} }
+Check 'Dark UI screens, compact layout, and search' { dotnet tests/OTS.Firewall79X.UiCapture/bin/Release/net10.0-windows/OTS.Firewall79X.UiCapture.dll artifacts/ui; if($LASTEXITCODE -ne 0){throw 'UI rendering failed'} }
 Check 'Windows telemetry, authenticated IPC and hostile framing' { dotnet tests/OTS.Firewall79X.WindowsTests/bin/Release/net10.0-windows/OTS.Firewall79X.WindowsTests.dll; if($LASTEXITCODE -ne 0){throw 'Windows integration probe failed'} }
 Check 'Standard user can read status but cannot mutate protection' {
   $username = 'OTSProbeUser'
