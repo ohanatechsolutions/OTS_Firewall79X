@@ -46,7 +46,14 @@ public partial class MainWindow : Window
             if(!dashboard.Enabled&&userMonitor!=null){userMonitor.Dispose();userMonitor=null;}
             if(userMonitor!=null)
             {
-                var overlay=userMonitor.Results().ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>overlay.GetValueOrDefault(l.Id,l)).ToList();var score=Posture.Calculate(layers,dashboard.Enabled);
+                var overlay=userMonitor.Results().ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>
+                {
+                    if(!overlay.TryGetValue(l.Id,out var user))return l;
+                    if(l.Id!=46)return user;
+                    return l with{Evidence=l.Evidence+"; "+user.Evidence,
+                        Limitation=l.Limitation+"; "+user.Limitation,
+                        Healthy=false};
+                }).ToList();var score=Posture.Calculate(layers,dashboard.Enabled);
                 dashboard=dashboard with{Layers=layers,Score=score.Score,Confidence=score.Confidence,Events=dashboard.Events.Concat(userMonitor.Events()).OrderByDescending(e=>e.Time).Take(300).ToList()};
             }
             if(exposureResult is { } evidence&&DateTimeOffset.UtcNow-evidence.ObservedAt<TimeSpan.FromHours(1))
