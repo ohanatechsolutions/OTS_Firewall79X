@@ -215,5 +215,17 @@ Test("Section H restored encrypted backup retains last-modified timestamp",()=>{
     Assert(Math.Abs((File.GetLastWriteTimeUtc(Path.Combine(restored,"time.txt"))-timestamp).TotalSeconds)<2);
 });
 
+Test("Section H generated offline kit preserves verified owned configuration exports",()=>{
+    var baseDir=Path.GetDirectoryName(Temp())!;var install=Path.Combine(baseDir,"install");var data=Path.Combine(baseDir,"data");var kit=Path.Combine(baseDir,"kit");
+    Directory.CreateDirectory(install);Directory.CreateDirectory(data);
+    File.WriteAllText(Path.Combine(data,"changes.json"),"[]");
+    File.WriteAllText(Path.Combine(install,"OTS.Firewall79X.Recovery.exe"),"fixture");
+    var result=RecoveryKit.Create(kit,install,data);
+    Assert(result.IncludesRecoveryExecutable && result.ConfigurationFiles==1);
+    Assert(File.ReadAllText(result.ManifestPath).Contains(Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("[]")))));
+    Assert(File.ReadAllText(Path.Combine(kit,"RECOVERY_INSTRUCTIONS.md")).Contains("NOT a bootable"));
+    Assert(File.ReadAllText(Path.Combine(kit,"RESTORE_OWNED_SETTINGS.ps1")).Contains("--restore"));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
