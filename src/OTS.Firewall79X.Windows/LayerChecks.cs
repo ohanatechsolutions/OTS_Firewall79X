@@ -233,8 +233,10 @@ public sealed class LayerChecks
             case 38:
                 if(Sensors?.Has("Microsoft-Windows-Windows Defender/Operational")!=true)
                     return Missing(id,"Defender detection event channel unavailable; keylogger/input-hook visibility unverified.");
-                return Good(id,$"Microsoft Defender malware channel subscribed; keylogging-labelled detections: {Sensors.ObservedKeyloggerAlerts}",
-                    LayerMode.Monitoring,"Recognized Defender detections only. Does not enumerate input hooks, record keystrokes, or detect arbitrary keyloggers; major capability remains unimplemented.");
+                if(Sensors.ObservedKeyloggerAlerts==0)
+                    return Missing(id,"Defender channel subscribed but no keylogger-labelled malware detection observed; cross-process input-hook inspection unavailable. Subscription alone is not detection evidence.");
+                return Good(id,$"Observed {Sensors.ObservedKeyloggerAlerts} authentic Defender keylogging-related threat detections",
+                    LayerMode.Monitoring,"Only previously identified malware events are monitored; no hooks are enumerated and unknown keyloggers are not detectable. Major capability remains incomplete.");
             case 39:
                 var sources=EndpointInventory.SoftwareSources();
                 Changed(id,"Trusted publisher roots",SystemQueries.RootCertificates());
