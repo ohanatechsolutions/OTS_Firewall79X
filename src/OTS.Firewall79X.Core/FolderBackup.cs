@@ -6,7 +6,7 @@ namespace OTS.Firewall79X.Core;
 public static class FolderBackup
 {
     public const long MaxBytes=60L*1024*1024;
-    private sealed record Entry(string Path,long Length,string Sha256);
+    private sealed record Entry(string Path,long Length,string Sha256,long? LastWriteUtcTicks=null);
     public sealed record Summary(int Files,long Bytes);
     private static void NoLink(string path)
     {
@@ -44,7 +44,7 @@ public static class FolderBackup
                     using var input=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.Read);using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                     var entry=zip.CreateEntry("files/"+relative,CompressionLevel.Fastest);long length=0;var buffer=new byte[65536];
                     using(var output=entry.Open()){int n;while((n=input.Read(buffer))>0){if(total+n>MaxBytes)throw new IOException("Backup grew beyond budget");output.Write(buffer,0,n);hash.AppendData(buffer,0,n);length+=n;total+=n;}}
-                    entries.Add(new(relative,length,Convert.ToHexString(hash.GetHashAndReset())));
+                    entries.Add(new(relative,length,Convert.ToHexString(hash.GetHashAndReset()),info.LastWriteTimeUtc.Ticks));
                 }
             }
             using var manifest=zip.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(manifest,entries,Wire.Json);
@@ -84,15 +84,21 @@ public static class FolderBackup
             {
                 string name=ValidatePath(item.Path);if(!names.Add(name)||item.Length<0||item.Length>MaxBytes-total)throw new InvalidDataException("Invalid or duplicate entry");
                 var entry=zip.GetEntry("files/"+name)??throw new InvalidDataException("Missing file");if(entry.Length!=item.Length)throw new InvalidDataException("Length mismatch");
-                FileStream? output=null;
+                FileStream? output=null;string? outputPath=null;
                 try
                 {
-                    if(destination!=null){var target=Path.GetFullPath(Path.Combine(destination,name.Replace('/',Path.DirectorySeparatorChar)));if(!target.StartsWith(destination+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Archive path escapes destination");Directory.CreateDirectory(Path.GetDirectoryName(target)!);NoLink(Path.GetDirectoryName(target)!);output=new FileStream(target,FileMode.CreateNew,FileAccess.Write,FileShare.None);}
+                    if(destination!=null){var target=Path.GetFullPath(Path.Combine(destination,name.Replace('/',Path.DirectorySeparatorChar)));if(!target.StartsWith(destination+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Archive path escapes destination");Directory.CreateDirectory(Path.GetDirectoryName(target)!);NoLink(Path.GetDirectoryName(target)!);output=new FileStream(target,FileMode.CreateNew,FileAccess.Write,FileShare.None);outputPath=target;}
                     using var input=entry.Open();using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);var buffer=new byte[65536];long length=0;int n;
                     while((n=input.Read(buffer))>0){length+=n;if(length>item.Length)throw new InvalidDataException("Expanded size exceeded");hash.AppendData(buffer,0,n);output?.Write(buffer,0,n);}
                     if(length!=item.Length||Convert.ToHexString(hash.GetHashAndReset())!=item.Sha256)throw new InvalidDataException("Backup file integrity mismatch");total+=length;
                 }
                 finally{output?.Dispose();}
+                // Restore metadata only after authenticated content has passed its digest check.
+                if(outputPath!=null && item.LastWriteUtcTicks is long ticks)
+                {
+                    if(ticks<DateTime.UnixEpoch.Ticks||ticks>DateTime.MaxValue.Ticks)throw new InvalidDataException("Invalid saved file timestamp");
+                    File.SetLastWriteTimeUtc(outputPath,new DateTime(ticks,DateTimeKind.Utc));
+                }
             }
             return new(entries.Count,total);
         }
