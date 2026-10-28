@@ -55,6 +55,44 @@ try
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(10));await pipe.ConnectAsync(timeout.Token);await pipe.WriteAsync(BitConverter.GetBytes(int.MaxValue),timeout.Token);await pipe.FlushAsync(timeout.Token);var b=new byte[1];int count=await pipe.ReadAsync(b,timeout.Token);if(count!=0)throw new Exception("Malformed frame not rejected");
     }
     if(!(await Ipc.SendAsync("status")).Ok)throw new Exception("Service unhealthy after malformed message");
+    // Exercise the installed service, not a mocked canary listener. These tests
+    // run only inside the disposable Windows CI environment.
+    var canaryFolder=Paths.At("canaries");
+    var urlPath=Path.Combine(canaryFolder,"canary-url.txt");
+    var credentialsPath=Path.Combine(canaryFolder,"decoy-credentials.txt");
+    var dnsPath=Path.Combine(canaryFolder,"canary-dns.txt");
+    if(!File.Exists(urlPath)||!File.Exists(credentialsPath)||!File.Exists(dnsPath))
+        throw new Exception("Section B canary files were not deployed");
+    var canaryUrl=new Uri(File.ReadAllText(urlPath).Trim());
+    if(canaryUrl.Host!="127.0.0.1"||canaryUrl.Scheme!="http"
+        ||!canaryUrl.AbsolutePath.StartsWith("/canary/"))
+        throw new Exception("Local canary escaped the loopback security boundary");
+    using(var http=new HttpClient(new HttpClientHandler{UseProxy=false}){Timeout=TimeSpan.FromSeconds(5)})
+    {
+        var canaryResponse=await http.GetAsync(canaryUrl);
+        if(canaryResponse.StatusCode!=System.Net.HttpStatusCode.NoContent)
+            throw new Exception("Exact canary URL did not return 204");
+        var decoyResponse=await http.GetAsync(new Uri($"http://127.0.0.1:{canaryUrl.Port}/unrecognized-probe"));
+        if(decoyResponse.StatusCode!=System.Net.HttpStatusCode.NotFound)
+            throw new Exception("Decoy service did not return safe 404");
+    }
+    var originalCanary=File.ReadAllText(credentialsPath);
+    try
+    {
+        File.AppendAllText(credentialsPath,"\nOTS-INTEGRATION-TAMPER");
+        await Task.Delay(1200);
+        var after=await Ipc.SendAsync("status");
+        var observed=after.Dashboard?.Events??[];
+        if(!observed.Any(e=>e.Layer==11&&e.Kind=="Canary content tampered")
+            || !observed.Any(e=>e.Layer==12&&e.Kind=="Local canary URL contacted")
+            || !observed.Any(e=>e.Layer==13&&e.Kind=="Decoy service connection"))
+            throw new Exception("Expected Section B tamper, URL and honeypot events not observed");
+    }
+    finally { File.WriteAllText(credentialsPath,originalCanary); }
+    var sections=(await Ipc.SendAsync("status")).Dashboard?.Layers;
+    if(sections is null||sections.Any(x=>x.Id is 11 or 12 or 13 && x.Mode==LayerMode.Enforcing))
+        throw new Exception("Deception layers falsely claimed network enforcement");
+
     return 0;
 }
 catch(Exception ex){Console.Error.WriteLine(ex);return 1;}
