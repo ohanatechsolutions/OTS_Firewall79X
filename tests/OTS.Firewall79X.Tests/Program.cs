@@ -377,5 +377,26 @@ Test("Section G: exact owned-rule identities never delete drifted or lookalike p
             Assert(!Mine(name,OwnedFirewallRule.InboundDescription,"8.8.8.8"));
     }
 });
+
+Test("Section G: event log key rotation preserves linked authenticated history",()=>{
+    var key0=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    var key1=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    var previous=Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+    var h0=EventIntegrity.Compute(0,key0,previous,"legacy");
+    var h1=EventIntegrity.Compute(1,key1,h0,"rotated");
+    var lines=new[]{
+        JsonSerializer.Serialize(new EventIntegrity.Record(previous,"legacy",h0),Wire.Json),
+        JsonSerializer.Serialize(new EventIntegrity.Record(h0,"rotated",h1,1),Wire.Json)
+    };
+    var ring=new Dictionary<int,byte[]>{{0,key0},{1,key1}};
+    var verification=EventIntegrity.Verify(lines,ring);
+    Assert(verification.Verified==2 && verification.ChainGaps==0 && verification.LastHmac==h1);
+    Throws<InvalidDataException>(()=>EventIntegrity.Verify(lines,key0));
+    var compromised=JsonSerializer.Deserialize<EventIntegrity.Record>(lines[1],Wire.Json)! with{KeyId=0};
+    Throws<InvalidDataException>(()=>EventIntegrity.Verify(
+        new[]{lines[0],JsonSerializer.Serialize(compromised,Wire.Json)},ring));
+    Throws<InvalidDataException>(()=>EventIntegrity.Verify(
+        new[]{lines[0],lines[1].Replace("rotated","tampered",StringComparison.Ordinal)},ring));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
