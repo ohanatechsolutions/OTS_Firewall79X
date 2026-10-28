@@ -58,7 +58,7 @@ public sealed class EventStore
             {
                 if(new FileInfo(file).Length>8*1024*1024)throw new InvalidDataException("Stored log segment exceeds verification limit");
                 using var raw=File.OpenRead(file);
-                using var body=file.EndsWith(".gz",StringComparison.OrdinalIgnoreCase)?new GZipStream(raw,CompressionMode.Decompress):raw;
+                using Stream body=file.EndsWith(".gz",StringComparison.OrdinalIgnoreCase)?new GZipStream(raw,CompressionMode.Decompress):raw;
                 using var reader=new StreamReader(body,Encoding.UTF8);
                 int expanded=0;string? line;
                 while((line=reader.ReadLine())!=null)
