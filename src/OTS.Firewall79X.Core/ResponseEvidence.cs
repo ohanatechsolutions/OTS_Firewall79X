@@ -15,7 +15,7 @@ public static class ForensicSnapshots
         var payload = JsonSerializer.SerializeToUtf8Bytes(data, Wire.Json);
         if (payload.Length > 3 * 1024 * 1024) throw new InvalidDataException("Forensic snapshot exceeds 3 MiB");
         var envelope = new EvidenceEnvelope(1, DateTimeOffset.UtcNow, Convert.ToHexString(SHA256.HashData(payload)), data);
-        var target = Path.Combine(directory, $"forensic-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.json");
+        var target = Path.Combine(directory, $"forensic-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss-fffffff}-{Guid.NewGuid():N}.json");
         var temp = target + ".partial";
         try
         {
