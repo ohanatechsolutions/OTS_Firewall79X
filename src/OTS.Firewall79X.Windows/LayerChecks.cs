@@ -141,8 +141,13 @@ public sealed class LayerChecks
                 return Good(id,$"{services.Count} services; {tasks.Count} task definitions; {startup.Count} loaded-user startup entries; {extensions.Count} browser extensions inventoried",LayerMode.Monitoring,
                     "Snapshot-only; unloaded user hives, managed browser policies, transient tasks and some browsers remain out of scope. Extension directory presence is not evidence of maliciousness.");
             case 26:
-                var drivers=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,State FROM Win32_SystemDriver","Name","PathName","State");Changed(id,"Kernel driver inventory",drivers);
-                return Good(id,$"{drivers.Count} system drivers inventoried",LayerMode.Monitoring,"Driver changes and enabled CodeIntegrity events; no memory rootkit scanner or kernel attestation.");
+                var drivers=SystemQueries.Wmi("root\\cimv2","SELECT Name,PathName,State FROM Win32_SystemDriver","Name","PathName","State");
+                Changed(id,"Kernel driver inventory",drivers);
+                var signed=SystemQueries.Wmi("root\\cimv2","SELECT DeviceName,IsSigned,DriverProviderName FROM Win32_PnPSignedDriver","DeviceName","IsSigned","DriverProviderName");
+                Changed(id,"PnP driver signature reports",signed);
+                int unsigned=signed.Count(d=>d.GetValueOrDefault("IsSigned")=="False");
+                return Good(id,$"{drivers.Count} system drivers; {signed.Count} PnP signature records; {unsigned} report IsSigned=False",LayerMode.Monitoring,
+                    "PnP signature flags are not a trust or revocation verdict. Existing CodeIntegrity event channel is conditional; no kernel-memory scanning, rootkit attestation or complete driver-signature verification.");
             case 27:return Channel(id,"Security","Monitors account creation, administrator-group membership, privilege-use, and audit-policy events.");
             case 28:
                 var media=EndpointInventory.UserMediaConsent();
