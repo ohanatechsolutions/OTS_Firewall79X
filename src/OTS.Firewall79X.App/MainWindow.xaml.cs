@@ -111,23 +111,60 @@ public partial class MainWindow : Window
     }
     private static string ScanSecrets(string root)
     {
-        List<string> result=["OTS Firewall79X — heuristic secrets scan. No secret values retained."];var dirs=new Stack<string>();dirs.Push(root);int files=0,skipped=0;long bytes=0;var watch=Stopwatch.StartNew();
-        while(dirs.Count>0&&files<5000&&bytes<64*1024*1024&&watch.Elapsed<TimeSpan.FromMinutes(2))
+        // Explicitly selected root only. No follow of NTFS junctions, symbolic links,
+        // or other reparse points; no secret values are emitted or persisted.
+        var full=Path.GetFullPath(root);
+        if(!Directory.Exists(full))throw new DirectoryNotFoundException(full);
+        var exclusions=new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {".git",".svn","node_modules","bin","obj",".venv","vendor","dist","build"};
+        List<string> result=["OTS Firewall79X — local heuristic secrets scan",
+            "Results contain possible indicator types and local paths only, never matched values.",
+            "Excluded tree names: "+string.Join(", ",exclusions.Order())];
+        var dirs=new Stack<string>();dirs.Push(full);
+        int files=0,skipped=0,findings=0,excluded=0,errors=0;long bytes=0;
+        var watch=Stopwatch.StartNew();
+        while(dirs.Count>0&&files<5000&&bytes<64L*1024*1024&&watch.Elapsed<TimeSpan.FromMinutes(2))
         {
-            var dir=dirs.Pop();try
+            var dir=dirs.Pop();
+            try
             {
                 if(File.GetAttributes(dir).HasFlag(FileAttributes.ReparsePoint)){skipped++;continue;}
-                foreach(var child in Directory.EnumerateDirectories(dir).Take(5000))if(dirs.Count<5000)dirs.Push(child);
+                foreach(var child in Directory.EnumerateDirectories(dir).Take(5000))
+                {
+                    if(exclusions.Contains(Path.GetFileName(child))){excluded++;continue;}
+                    if(dirs.Count<5000)dirs.Push(child);else skipped++;
+                }
                 foreach(var path in Directory.EnumerateFiles(dir))
                 {
-                    if(files>=5000||bytes>=64*1024*1024)break;files++;
-                    try{var f=new FileInfo(path);if(f.Length>256*1024||f.Attributes.HasFlag(FileAttributes.ReparsePoint)){skipped++;continue;}bytes+=f.Length;var text=File.ReadAllText(path);var kind=Detections.SecretKind(text);if(kind!=null)result.Add($"{kind}: {path}");}
-                    catch(IOException){skipped++;}catch(UnauthorizedAccessException){skipped++;}
+                    if(files>=5000||bytes>=64L*1024*1024||watch.Elapsed>=TimeSpan.FromMinutes(2))break;
+                    files++;
+                    try
+                    {
+                        var f=new FileInfo(path);
+                        if(!f.Exists||f.Length>256*1024||f.Attributes.HasFlag(FileAttributes.ReparsePoint)){skipped++;continue;}
+                        // Avoid following a changed file through a symlink after enumeration.
+                        using var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,8192,FileOptions.SequentialScan);
+                        if(stream.Length>256*1024){skipped++;continue;}
+                        using var reader=new StreamReader(stream,System.Text.Encoding.UTF8,true);
+                        var text=reader.ReadToEnd();
+                        bytes+=stream.Length;
+                        foreach(var kind in Detections.SecretKinds(text))
+                        {
+                            findings++;
+                            result.Add($"{kind}: {path}");
+                            if(findings>=2500)break;
+                        }
+                        if(findings>=2500)break;
+                    }
+                    catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or System.Text.DecoderFallbackException){errors++;}
                 }
             }
-            catch(IOException){skipped++;}catch(UnauthorizedAccessException){skipped++;}
+            catch(Exception ex)when(ex is IOException or UnauthorizedAccessException){errors++;}
+            if(findings>=2500)break;
         }
-        result.Add($"Examined entries: {files}; bytes read: {bytes}; skipped/errors: {skipped}; remaining queued directories: {dirs.Count}. Budget: 5,000 files, 256 KiB/file, 64 MiB total, two minutes. Large directories may be truncated.");return string.Join(Environment.NewLine,result);
+        result.Add($"Examined entries: {files}; bytes read: {bytes}; possible indicators: {findings}; skipped: {skipped}; excluded directories: {excluded}; inaccessible/errors: {errors}; queued directories: {dirs.Count}.");
+        result.Add("Caps: 5,000 files, 256 KiB/file, 64 MiB total, 2 minutes, 2,500 indicators. Exclusions, changing files, binary and oversize content can cause misses. No external uploads or automatic remediation. Review privately before sharing report.");
+        return string.Join(Environment.NewLine,result);
     }
     private async void BreachClick(object sender,RoutedEventArgs e)
     {
