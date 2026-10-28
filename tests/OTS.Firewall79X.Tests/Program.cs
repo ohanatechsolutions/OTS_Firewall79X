@@ -346,5 +346,16 @@ Test("Section D execution indicators require suspicious command or parent lineag
     Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
     Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
 });
+Test("WFP 5157 endpoint roles use remote DestAddress and local SourcePort",()=>{
+    Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","6",out var evt));
+    Assert(evt!=null&&evt.RemoteAddress=="8.8.8.8"&&evt.LocalPort==445&&evt.RemotePort==50420);
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14593","192.168.1.10","445","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","17",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","0","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","127.0.0.1","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","0.0.0.0","445","8.8.8.8","50420","6",out _));
+    Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","203.0.113.7","50420","6",out _));
+    Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","2001:db8::10","3389","2606:4700:4700::1111","52880","6",out var v6)&&v6?.LocalPort==3389);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}

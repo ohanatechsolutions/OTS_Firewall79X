@@ -5,7 +5,7 @@ It does **not** satisfy the full network-protection acceptance criteria. These a
 security capabilities, not a count of completed catalog entries.
 
 ## New behavior
-- Windows Security **5157** telemetry is consumed only when the **inbound direction
+- Windows Security **5157** TCP telemetry now uses the Microsoft-documented endpoint layout: `SourceAddress`/`SourcePort` are LOCAL, `DestAddress`/`DestPort` are REMOTE, and inbound restrictions use `DestAddress` as the remote IP and `SourcePort` as the scanned local port. UDP, ICMP, invalid port fields and outbound 5157 records never trigger this auto-ban. Only when the **inbound direction
   field is explicitly %%14592**. Outbound events, malformed ports, private,
   loopback, link-local, documentation, reserved and IPv4-mapped IPv6 addresses are
   ineligible; local interface, DNS, DHCP and gateway addresses are rechecked
@@ -71,3 +71,7 @@ Windows `GetExtendedUdpTable` now collects PID-attributed IPv4/IPv6 **bound UDP 
 ## Reactive observed Feodo intelligence restrictions
 
 An outbound TCP connection actually observed to a fresh, strictly parsed Feodo Tracker IPv4 endpoint may trigger one five-minute exact-destination Windows Firewall outbound deny rule (maximum 16). The service rechecks that the destination is not a local adapter, DNS, gateway or DHCP address; on expiration or feed staleness it removes its own rules in normal operation. It also cleans up on stack OFF/service restart. This is not proactive full-feed blocking, independently signed feed verification, IPv6 coverage, proof of malware, proof of blocked packets or guaranteed session termination. A hard service crash may leave a rule until recovery.
+
+## Corrected Security 5157 parsing
+
+Earlier Section A builds mistakenly treated the LOCAL `SourceAddress` as the remote attacker and the REMOTE `DestPort` as a scanned local port. The corrected parser rejects unexpected direction, invalid address families/ports, unsupported protocol and special-purpose remote addresses. Both scan alerting and temporary exact-source restrictions use one validated remote destination/local source-port mapping. See Microsoft Event 5157 documentation: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-5157 .
