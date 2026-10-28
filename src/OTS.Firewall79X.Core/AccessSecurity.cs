@@ -10,17 +10,25 @@ namespace OTS.Firewall79X.Core;
 /// establish whether blocking an address is safe on every host.</summary>
 public sealed class AuthenticationFailureMonitor
 {
-    public sealed record Finding(bool ValidRemoteSource, bool Alert, int Count, string Source, string Reason);
+    public sealed record Finding(bool ValidRemoteSource, bool Alert, int Count, string Source, string Reason)
+    {
+        // A candidate is not a block: an administrator must separately enable the guard,
+        // and the Windows rule manager must independently re-verify local trusted addresses.
+        public bool RestrictionCandidate { get; init; }
+    }
     private sealed class Window
     {
-        public Queue<DateTimeOffset> Attempts { get; } = new();
+        public Queue<(DateTimeOffset At,string? InvalidAccountTag)> Attempts { get; } = new();
         public DateTimeOffset LastAlert { get; set; } = DateTimeOffset.MinValue;
+        public DateTimeOffset LastRestrictionCandidate { get; set; } = DateTimeOffset.MinValue;
     }
     private readonly Dictionary<string,Window> sources = new(StringComparer.Ordinal);
     private readonly TimeSpan period = TimeSpan.FromMinutes(2);
     private readonly TimeSpan cooldown = TimeSpan.FromMinutes(5);
+    private readonly byte[] accountTagKey = RandomNumberGenerator.GetBytes(32);
 
-    public Finding Observe(string? rawSource, string? rawLogonType, DateTimeOffset now)
+    public Finding Observe(string? rawSource, string? rawLogonType, DateTimeOffset now,
+        string? rawSubStatus = null, string? rawUserName = null)
     {
         if (!int.TryParse(rawLogonType,NumberStyles.None,CultureInfo.InvariantCulture,out var logonType)
             || logonType is not (3 or 10))
@@ -32,17 +40,33 @@ public sealed class AuthenticationFailureMonitor
         if (sources.Count>=2048 && !sources.ContainsKey(source))
         {
             foreach (var stale in sources.Where(x=>x.Value.Attempts.Count==0
-                || x.Value.Attempts.Last()<now-period).Select(x=>x.Key).ToArray())sources.Remove(stale);
+                || x.Value.Attempts.Last().At<now-period).Select(x=>x.Key).ToArray())sources.Remove(stale);
             if (sources.Count>=2048)sources.Remove(sources.Keys.First()); // bounded memory, never claim coverage for evicted sources
         }
         if (!sources.TryGetValue(source,out var window))sources[source]=window=new Window();
-        while (window.Attempts.Count>0&&window.Attempts.Peek()<=now-period)window.Attempts.Dequeue();
-        window.Attempts.Enqueue(now);
+        while (window.Attempts.Count>0&&window.Attempts.Peek().At<=now-period)window.Attempts.Dequeue();
+        // Only Windows STATUS_NO_SUCH_USER (not a mistyped password for a valid account)
+        // can contribute toward the optional RDP-only restriction threshold.
+        string? tag=null;
+        if (logonType==10 && string.Equals(rawSubStatus,"0xC0000064",StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(rawUserName) && rawUserName.Length<=128)
+        {
+            var raw=Encoding.UTF8.GetBytes(rawUserName.Trim().ToUpperInvariant());
+            try{tag=Convert.ToHexString(HMACSHA256.HashData(accountTagKey,raw).AsSpan(0,8));}
+            finally{CryptographicOperations.ZeroMemory(raw);}
+        }
+        window.Attempts.Enqueue((now,tag));
         while (window.Attempts.Count>128)window.Attempts.Dequeue();
         bool alert=window.Attempts.Count>=8 && now-window.LastAlert>=cooldown;
         if(alert)window.LastAlert=now;
+        bool candidate=logonType==10 && window.Attempts.Count>=32
+            && window.Attempts.Count(x=>x.InvalidAccountTag!=null)>=32
+            && window.Attempts.Where(x=>x.InvalidAccountTag!=null).Select(x=>x.InvalidAccountTag).Distinct().Count()>=5
+            && now-window.LastRestrictionCandidate>=TimeSpan.FromMinutes(10);
+        if(candidate)window.LastRestrictionCandidate=now;
         return new(true,alert,window.Attempts.Count,source,
-            alert?"Repeated remote authentication failures":"Monitoring remote failures; no automatic access restriction");
+            alert?"Repeated remote authentication failures":"Monitoring remote failures; no automatic access restriction")
+            { RestrictionCandidate=candidate };
     }
 }
 

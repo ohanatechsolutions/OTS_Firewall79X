@@ -12,7 +12,8 @@ public sealed class EventSensors : IDisposable
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
     private readonly TemporaryFirewallGuard? networkGuard;
-    private int remoteFailedLoginEvents,loginSecurityEvents;
+    private int remoteFailedLoginEvents,loginSecurityEvents,privilegeSecurityEvents;
+    public int ObservedPrivilegeSecurityEvents=>Volatile.Read(ref privilegeSecurityEvents);
     public int ObservedRemoteLogonFailures=>Volatile.Read(ref remoteFailedLoginEvents);
     public int ObservedLoginSecurityEvents=>Volatile.Read(ref loginSecurityEvents);
     private int parsedDnsResponses;
@@ -36,7 +37,7 @@ public sealed class EventSensors : IDisposable
     public EventSensors(EventStore events,TemporaryFirewallGuard? networkGuard=null){this.events=events;this.networkGuard=networkGuard;}
     public void Start()
     {
-        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4672 or EventID=4673 or EventID=4674 or EventID=4720 or EventID=4722 or EventID=4724 or EventID=4726 or EventID=4728 or EventID=4732 or EventID=4735 or EventID=4737 or EventID=4738 or EventID=4756 or EventID=4719 or EventID=1102 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
+        Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4634 or EventID=4647 or EventID=4648 or EventID=4740 or EventID=4778 or EventID=4779 or EventID=4800 or EventID=4801 or EventID=4672 or EventID=4673 or EventID=4674 or EventID=4720 or EventID=4722 or EventID=4724 or EventID=4726 or EventID=4728 or EventID=4732 or EventID=4735 or EventID=4737 or EventID=4738 or EventID=4756 or EventID=4719 or EventID=1102 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
         Watch("System","*[System[(EventID=7045 or EventID=7040 or EventID=7036 or EventID=219)]]");
         Watch("Microsoft-Windows-TaskScheduler/Operational","*[System[(EventID=106 or EventID=140 or EventID=141)]]");
         Watch("Microsoft-Windows-WMI-Activity/Operational","*[System[(EventID=5857 or EventID=5858 or EventID=5860 or EventID=5861)]]");
@@ -77,9 +78,9 @@ public sealed class EventSensors : IDisposable
                 case 4624:
                 {
                     var type=Get("LogonType");
-                    if(type is "2" or "3" or "7" or "10" or "11")
+                    if(type is "2" or "3" or "7" or "9" or "10" or "11")
                     {
-                        var kind=type switch {"2"=>"Interactive","3"=>"Network","7"=>"Unlock","10"=>"Remote interactive (RDP)","11"=>"Cached interactive",_=>"Unknown"};
+                        var kind=type switch {"2"=>"Interactive","3"=>"Network","7"=>"Unlock","9"=>"New credentials","10"=>"Remote interactive (RDP)","11"=>"Cached interactive",_=>"Unknown"};
                         var account=Wire.Clean(Get("TargetUserName"),64);
                         events.Add(45,type=="10"?"Warning":"Info",kind+" logon",
                             $"Account={account}; remote={Wire.Clean(Get("IpAddress"),64)}; Windows Security event 4624.");
@@ -95,17 +96,29 @@ public sealed class EventSensors : IDisposable
                     Interlocked.Increment(ref loginSecurityEvents);
                     lock(sync)
                     {
-                        var failure=authenticationFailures.Observe(Get("IpAddress"),type,now);
+                        var failure=authenticationFailures.Observe(Get("IpAddress"),type,now,Get("SubStatus"),Get("TargetUserName"));
                         if(failure.ValidRemoteSource)
                         {
                             Interlocked.Increment(ref remoteFailedLoginEvents);
                             if(failure.Alert)
                                 events.Add(41,"High","Repeated remote authentication failures",
-                                    $"{failure.Count} observed network/remote-interactive failures from {failure.Source} within two minutes; suspicious but no IP ban or account lockout was applied.");
+                                    $"{failure.Count} observed network/remote-interactive failures from {failure.Source} within two minutes; an alert is not proof of an attack.");
+                            if(failure.RestrictionCandidate)
+                                networkGuard?.ObserveAuthenticationAttack(failure.Source,now);
                         }
                     }
                     break;
                 }
+                case 4634:case 4647:case 4778:case 4779:case 4800:case 4801:
+                    events.Add(45,"Info","Session state changed",
+                        $"Windows Security event {record.Id}; session transitions are not new authentication.");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
+                case 4740:
+                    events.Add(45,"Warning","Account lockout recorded",
+                        "Windows Security event 4740; review native Windows logs for the affected account and cause.");
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
                 case 4648:
                     events.Add(45,"Warning","Explicit credentials used",
                         $"Windows event 4648; calling account {Wire.Clean(Get("SubjectUserName"),64)}. No credentials collected.");
@@ -113,9 +126,17 @@ public sealed class EventSensors : IDisposable
                     break;
                 case 4672:case 4673:case 4674:case 4720:case 4722:case 4724:case 4726:
                 case 4728:case 4732:case 4735:case 4737:case 4738:case 4756:case 4719:case 1102:
-                    events.Add(27,record.Id is 4672 or 4673 or 4674?"Info":"Warning",
-                        record.Id is 4672 or 4673 or 4674?"Privilege-use audit event":"Account or privilege-policy event",
-                        $"Security event {record.Id}; target {Wire.Clean(Get("TargetUserName"),80)}; confirm authorization in Windows Security log.");break;
+                {
+                    var privileged=record.Id is 4672 or 4673 or 4674;
+                    var description=record.Id==4672?"Special privileges assigned at logon":
+                        privileged?"Sensitive privilege operation audited":"Account, group or security policy changed";
+                    var detail=$"Security event {record.Id}; target {Wire.Clean(Get("TargetUserName"),80)}; verify authorization in native Windows logs.";
+                    events.Add(27,privileged?"Info":"Warning",description,detail);
+                    events.Add(45,privileged?"Info":"Warning",description,detail);
+                    Interlocked.Increment(ref privilegeSecurityEvents);
+                    Interlocked.Increment(ref loginSecurityEvents);
+                    break;
+                }
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
                 case 4663:
                     AuditedFileAccess.Finding found;
@@ -137,7 +158,18 @@ public sealed class EventSensors : IDisposable
                             $"{found.DistinctFiles} distinct files accessed by one process within one minute; backups and indexing can be legitimate. Copy/exfiltration has not been proven.");
                     }
                     break;
-                case 4688:var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"),Get("ParentProcessName"));if(indicator!=null)events.Add(36,"Warning","Suspicious execution indicator",indicator);break;
+                case 4688:
+                {
+                    var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"),Get("ParentProcessName"));
+                    if(indicator!=null)events.Add(36,"Warning","Suspicious execution indicator",indicator);
+                    if(Get("TokenElevationType")=="%%1937")
+                    {
+                        events.Add(45,"Info","Elevated process token observed",
+                            $"Windows Security event 4688; executable {Wire.Clean(Path.GetFileName(Get("NewProcessName")),80)}; process elevation is not necessarily malicious.");
+                        Interlocked.Increment(ref privilegeSecurityEvents);
+                    }
+                    break;
+                }
                 case 5157:
                     var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);
                     networkGuard?.ObserveBlocked(address,Get("Direction"),port,now);
