@@ -75,3 +75,7 @@ An outbound TCP connection actually observed to a fresh, strictly parsed Feodo T
 ## Corrected Security 5157 parsing
 
 Earlier Section A builds mistakenly treated the LOCAL `SourceAddress` as the remote attacker and the REMOTE `DestPort` as a scanned local port. The corrected parser rejects unexpected direction, invalid address families/ports, unsupported protocol and special-purpose remote addresses. Both scan alerting and temporary exact-source restrictions use one validated remote destination/local source-port mapping. See Microsoft Event 5157 documentation: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-5157 .
+
+## Firewall-rule ownership and test isolation
+
+Rule cleanup now requires an exact registered rule prefix, exact public remote IP, direction, action, any-protocol selector, and either an exact current ownership group/marker or the precisely recognized legacy description. A prefix collision with any unrecognized rule causes fail-closed refusal instead of deleting or replacing it. Administrative users remain trusted; these tags are not cryptographic authorization. The Windows integration test no longer starts a second guard, which previously could remove real service-owned temporary rules during testing.

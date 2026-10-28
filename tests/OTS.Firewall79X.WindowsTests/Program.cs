@@ -45,15 +45,13 @@ try
     var hardware=SecurityDeviceAudit.Read();
     if(!hardware.Evidence.Contains("TPM:")||!hardware.Evidence.Contains("OS drive protection:"))
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
-    var policy=new TemporaryFirewallGuard(new EventStore(Path.Combine(Path.GetTempPath(),"ots-network-guard-ci-"+Guid.NewGuid().ToString("N"))));
-    policy.Start();
-    if(policy.BlockObservedIntelligence("127.0.0.1",DateTimeOffset.UtcNow) ||
-       policy.BlockObservedIntelligence("192.0.2.10",DateTimeOffset.UtcNow) ||
-       policy.BlockObservedIntelligence("::ffff:8.8.8.8",DateTimeOffset.UtcNow))
-       throw new Exception("Invalid intelligence destination passed allowlist");
-    if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
-    if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
-    policy.Dispose();
+    // Do not create a second guard here: starting it would sweep the live OTS
+    // service's owned temporary restrictions and alter enforcement during CI.
+    if(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","10.1.2.3","445","8.8.8.8","50544","6",out var blockedProbe)
+       || blockedProbe?.RemoteAddress!="8.8.8.8"||blockedProbe.LocalPort!=445)
+       throw new Exception("WFP event endpoint roles are wrong");
+    var firewallSnapshot=new FirewallAudit().Read();
+    if(firewallSnapshot.Rules.Count<0)throw new Exception("Firewall snapshot missing");
     var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))

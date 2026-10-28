@@ -357,5 +357,17 @@ Test("WFP 5157 endpoint roles use remote DestAddress and local SourcePort",()=>{
     Assert(!BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","203.0.113.7","50420","6",out _));
     Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","2001:db8::10","3389","2606:4700:4700::1111","52880","6",out var v6)&&v6?.LocalPort==3389);
 });
+Test("Temporary firewall ownership requires exact structured fields, not name prefix alone",()=>{
+    const string src="8.8.4.4";
+    var name=TemporaryRuleIdentity.InboundPrefix+src;
+    Assert(TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,"someone else's rule",TemporaryRuleIdentity.Group,src,1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,"*",1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,2,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(TemporaryRuleIdentity.InboundPrefix+"192.168.1.1",TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,"192.168.1.1",1,0,256));
+    Assert(TemporaryRuleIdentity.IsOwned(TemporaryRuleIdentity.OutboundPrefix+src,TemporaryRuleIdentity.Marker+"intelligence",TemporaryRuleIdentity.Group,src,2,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(TemporaryRuleIdentity.OutboundPrefix+src,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,2,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned("Unrelated firewall rule",TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,1,0,256));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
