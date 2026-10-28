@@ -146,13 +146,19 @@ public sealed class LayerChecks
             case 45:return Channel(id,"Security","Monitors login, failed login, and special-privilege assignment events.");
             case 46:
                 var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
-                if(defender==null)return Missing(id,"Microsoft Defender status is unavailable");bool active=defender["AntivirusEnabled"]=="True"&&defender["RealTimeProtectionEnabled"]=="True";return active?Good(id,"Defender antivirus and real-time protection are enabled",LayerMode.Auditing,"A subset of the requested hardening audit; not a full ASLR/DEP/encryption/password-policy assessment."):Bad(id,"Microsoft Defender antivirus or real-time protection is inactive","May reflect a different antivirus product; OTS does not disable existing security software.");
+                var hardening=HostHardeningAudit.Read();
+                if(defender==null)return Missing(id,"Microsoft Defender status is unavailable; "+hardening.Summary);
+                bool active=defender["AntivirusEnabled"]=="True"&&defender["RealTimeProtectionEnabled"]=="True";
+                return active?Good(id,"Defender real-time protection enabled; "+hardening.Summary,LayerMode.Auditing,"UAC, DEP, and LSA indicators are read-only partial checks; an absent/unsupported value is not reported as protected. No broad ASLR, BitLocker or patch verification."):Bad(id,"Defender real-time protection is not confirmed; "+hardening.Summary,"May reflect a different antivirus product. Existing security settings are never automatically changed.");
             case 47:return SystemQueries.Reg(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer","NoDriveTypeAutoRun") is int autorun&&autorun==255?Good(id,"AutoRun disabled for drive types; journaled restoration available",LayerMode.Enforcing,"Narrow hardening scope; legacy protocols and other policies are not automatically changed."):Bad(id,"AutoRun hardening is not applied or was changed externally");
             case 48:return Missing(id,"Browser audit requires the interactive-user collector");
             case 50:return new(id,LayerMode.Idle,false,"Select a folder in the desktop interface to scan for likely secrets","Reads only the selected tree within budgets; reports secret type and file location, never matched plaintext.");
             case 51:
                 var rdp=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Terminal Server","fDenyTSConnections");var assist=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Remote Assistance","fAllowToGetHelp");
-                return Good(id,$"RDP deny-connections={rdp??"unknown"}; Remote Assistance={assist??"unknown"}",LayerMode.Auditing,"Intel AMT, DMA protections, Wake-on-LAN and firmware policy are not fully assessed.");
+                var remoteSummary=$"RDP deny-connections={rdp??"unknown"}; Remote Assistance={assist??"unknown"}";
+                if(rdp is int rdpValue && rdpValue==0 || assist is int assistValue && assistValue==1)
+                    return Bad(id,remoteSummary+"; remote access is permitted by at least one policy","A permitted remote feature is not proof the host is externally reachable. No policy is changed.");
+                return Good(id,remoteSummary,LayerMode.Auditing,"Unspecified policies are not proof of protection. Intel AMT, DMA protections, Wake-on-LAN and firmware policy are not fully assessed.");
             case 52:
                 var fixes=SystemQueries.Wmi("root\\cimv2","SELECT HotFixID,InstalledOn FROM Win32_QuickFixEngineering","HotFixID","InstalledOn");Changed(id,"Installed Windows hotfixes",fixes);
                 return Good(id,$"{fixes.Count} installed Windows hotfix records",LayerMode.Auditing,"Inventory only. Missing-update search and software CVE matching are incomplete; this does not prove the host is patched.");

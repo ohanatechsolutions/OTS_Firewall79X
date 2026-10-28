@@ -18,3 +18,6 @@ Installer is unsigned; trusted update delivery requires a valid signing identity
 
 
 **GitHub source archive caveat:** The `installer/OTS-Firewall79X-Setup.exe` tracked in Git LFS may download as a 134-byte text pointer in an automatically generated GitHub source ZIP. That is not executable. Download the compiled installer from Releases or clone with Git LFS. The compiled Release ZIP has a real `installer/` folder. Installer execution on the user's specific Windows 11 Home device is not yet verified.
+
+
+The service now authenticates retained JSONL/gzip event entries with the protected HMAC key on startup and continues the chain across new restarts. Earlier versions seeded new chains on startup; their historical discontinuities are reported rather than silently treated as proof of deletion. The 20-segment retention cap, absence of external tamper-evident anchoring and administrator trust boundary still apply. Host hardening audits are read-only indicators for UAC, DEP, LSA protection and explicit SMBv1 server disablement; unknown values are **not** evidence of protection. These additions do not implement missing network filters or complete all 79 layers.

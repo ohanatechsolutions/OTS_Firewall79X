@@ -83,3 +83,11 @@
 | 77 | USB and Removable Device Alerts | `src/OTS.Firewall79X.Windows/LayerChecks.cs` | Runtime-dependent: audit/monitor/idle/enforce | Implemented with limitations; full requirement incomplete | Core regression evidence where applicable; complete Windows layer validation NOT RUN | See declared runtime limitation, KNOWN_LIMITATIONS.md and original specification; complete per-layer Windows integration evidence outstanding |
 | 78 | Ransomware Behavior Monitoring | `src/OTS.Firewall79X.App/MainWindow.xaml.cs / UserMonitor.cs` | Runtime-dependent: audit/monitor/idle/enforce | Implemented with limitations; full requirement incomplete | Core regression evidence where applicable; complete Windows layer validation NOT RUN | See declared runtime limitation, KNOWN_LIMITATIONS.md and original specification; complete per-layer Windows integration evidence outstanding |
 | 79 | Beaconing Detection | `src/OTS.Firewall79X.Windows/LayerChecks.cs` | Runtime-dependent: audit/monitor/idle/enforce | Implemented with limitations; full requirement incomplete | Core regression evidence where applicable; complete Windows layer validation NOT RUN | See declared runtime limitation, KNOWN_LIMITATIONS.md and original specification; complete per-layer Windows integration evidence outstanding |
+
+
+## Additional implementation evidence (2026-10-27)
+
+- **Layer 46 — host-hardening audit expanded:** read-only UAC, DEP, LSA protected-process and SMBv1-server registry indicators alongside existing Defender telemetry. Unknown settings are never called enabled, and full ASLR, disk encryption, vulnerability assessment and password policies remain out of scope for this check.
+- **Layer 61 — local event-log integrity improved:** HMAC validation for retained events on startup, continuity across future restarts, legacy chain gap reporting, and fail-degraded behavior on integrity errors. Not tamper-proof against local administrators or removal of entire segments; not externally anchored.
+- **Layer 51 — remote access exposure:** reports potentially permitted RDP or Remote Assistance policy as attention-needed rather than a healthy indicator. This is not a remote-reachability scan.
+- **Other 76 layers:** no additional full-implementation claims. **All 79 remain incomplete relative to the original full requirements.**

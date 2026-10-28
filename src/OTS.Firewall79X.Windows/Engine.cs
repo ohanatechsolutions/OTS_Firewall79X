@@ -12,7 +12,7 @@ public sealed class Engine : IDisposable
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
     private readonly Dictionary<int,LayerResult> inventoryCache=[];
-    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,39,44,51,52];
+    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,39,44,46,51,52];
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));
@@ -144,7 +144,8 @@ public sealed class Engine : IDisposable
                 var active=journal.Entries.Where(e=>e.State=="applied").ToArray();bool intact=active.All(e=>settings.Read(e.Key)==e.Applied);
                 return intact?Good($"{active.Length} journaled settings still match OTS-applied values",LayerMode.Monitoring):new(id,LayerMode.Auditing,false,"An owned setting changed externally; it will be preserved on restore");
             case 60:return Good("Severity-labelled, deduplicated event history connected to dashboard",limit:"Desktop notifications require the running interactive application; external messaging is not configured.");
-            case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging degraded: "+events.LastError,"Recent events remain in bounded memory only until storage is repaired.");return Good("Bounded JSONL logs with gzip rotation and HMAC chaining",limit:"Up to 20 compressed segments plus active 2 MB segment. Counters are since service start. Administrator can tamper; cross-boot chain verification is incomplete.");
+            case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging or integrity degraded: "+events.LastError,"Stored logs require administrator review; in-memory events are bounded.");
+                return Good($"HMAC-authenticated retained log entries: {events.VerifiedRetainedEvents}; legacy chain discontinuities: {events.LegacyChainGaps}",limit:"Stored records are individually authenticated on service startup; chain links are continued across new restarts. Older builds restarted their chains, so historical end-to-end continuity cannot be guaranteed. Compressed segments rotate after 20; local administrators remain trusted.");
             case 62:return Good(battery?"Battery mode: 90-second normal telemetry, 15-minute heavy inventory":"AC mode: 30-second normal telemetry, 5-minute heavy inventory",limit:"Backoff follows measured service CPU/memory pressure. Bounded tables and serial audits; adaptive disk scheduling remains incomplete. Cached samples retain their true observation time.");
             case 63:return new(id,LayerMode.Unavailable,false,"No configured threat feeds; freshness cannot be established");
             case 64:return Good("Log-integrity key is encrypted by machine DPAPI in administrator/SYSTEM-only storage",LayerMode.Enforcing,"Local administrators remain trusted; DPAPI is not off-device protection.");
