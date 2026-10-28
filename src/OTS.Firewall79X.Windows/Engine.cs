@@ -8,9 +8,9 @@ namespace OTS.Firewall79X.Windows;
 public sealed class Engine : IDisposable
 {
     private sealed record Persisted(bool Enabled,DateTimeOffset? ResumeAt);
-    private readonly object gate=new();private readonly EventStore events;private readonly ChangeJournal journal;private readonly WindowsSettings settings=new();private readonly LayerChecks checks;
+    private readonly object gate=new();private readonly EventStore events;private readonly ChangeJournal journal;private readonly WindowsSettings settings=new();private readonly LayerChecks checks;private readonly ResilienceJobs resilience;
     private EventSensors? sensors;private TemporaryFirewallGuard? networkGuard;private DeceptionMonitor? deception;private readonly FeodoThreatFeed feed=new();private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
-    private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
+    private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private DateTime historyObservedOn=DateTime.MinValue;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
     private ResourceBudget.Decision governor=ResourceBudget.Evaluate(false,0,0,long.MaxValue,0);
     private static bool WatchdogRunning(){using var svc=new ServiceController("OTSFirewall79XWatchdog");return svc.Status==ServiceControllerStatus.Running;}
@@ -19,6 +19,7 @@ public sealed class Engine : IDisposable
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));
+        resilience=new ResilienceJobs((id,severity,kind,detail)=>events.Add(id,severity,kind,detail));
         journal=new(Paths.At("changes.json"),settings);checks=new(events){ThreatFeed=feed};
         cached=new(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,IdleResults(),[],[],0,0,0,null,"No validated intelligence feeds configured");
         // Recover durable intent first; never reapply a stale transaction over newer system settings.
@@ -44,7 +45,11 @@ public sealed class Engine : IDisposable
                     case "off":Disable(null);return new(true,"OTS stack stopped; journaled changes restored where still owned");
                     case "pause":Disable(DateTimeOffset.UtcNow.AddMinutes(15));return new(true,"Paused for 15 minutes");
                     case "restore":Disable(null);return new(true,"Restoration completed; external changes were preserved");
-                    case "report":return new(true,Reports.Generate(cached));
+                    case "report":return new(true,Reports.Generate(cached)+"\n\n"+SecurityDossier.Generate(cached));
+                    case "configure-backup":resilience.Configure("backup",r.Source,r.Destination,r.Secret);return new(true,"Scheduled encrypted off-device folder backups enabled. Preserve the passphrase independently.");
+                    case "configure-export":resilience.Configure("export",null,r.Destination,r.Secret);return new(true,"Optional encrypted rotated-log shipping enabled. Preserve the passphrase independently.");
+                    case "disable-backup":resilience.Disable("backup");return new(true,"Scheduled backups disabled; existing archives were preserved.");
+                    case "disable-export":resilience.Disable("export");return new(true,"Off-device log shipping disabled; retained encrypted archives were preserved.");
                     case "selftest":return new(Catalog.All.Count==79&&journal.Entries.All(e=>e.Key==WindowsSettings.AutoRun),"Catalog and journal schema verified; this is not a full protection regression test");
                     default:return new(false,"Unsupported command");
                 }
@@ -60,6 +65,12 @@ public sealed class Engine : IDisposable
         {
             journal.Apply(WindowsSettings.AutoRun,"255");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;sensors=new(events,networkGuard);sensors.Start();checks.Sensors=sensors;deception=new(events);
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
+            try
+            {
+                var kit=Paths.At("recovery-kit");Paths.SecureDirectory(kit);
+                RecoveryKit.Create(kit,AppContext.BaseDirectory,Paths.Root);
+            }
+            catch(Exception ex){events.Add(69,"Warning","Local recovery kit generation failed",ex.Message);}
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
             events.Add(47,"Info","Protection activated","Narrow AutoRun hardening applied with rollback; system firewall policy preserved");
         }
@@ -82,7 +93,7 @@ public sealed class Engine : IDisposable
             {
                 lock(gate){if(!enabled&&resumeAt!=null&&resumeAt<=DateTimeOffset.UtcNow)Enable();}
                 bool active;lock(gate)active=enabled;
-                if(active){await feed.RefreshIfDueAsync(ct);networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);}
+                if(active){await feed.RefreshIfDueAsync(ct);networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);if(!governor.DeferNonessentialDiskWork)await Task.Run(()=>resilience.Pulse(DateTimeOffset.UtcNow),ct);}
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
                 // Resource governor uses measured service pressure and real free disk space.
                 long free=long.MaxValue,capacity=0;
@@ -130,12 +141,29 @@ public sealed class Engine : IDisposable
             cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary);
             if(!governor.DeferNonessentialDiskWork&&events.ConsumeSnapshotRequest())
             {
-                var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
-                AtomicFile.Write(Path.Combine(folder,$"snapshot-{now:yyyyMMdd-HHmmss}.json"),JsonSerializer.Serialize(cached,Wire.Json));
-                foreach(var old in Directory.GetFiles(folder,"snapshot-*.json").OrderByDescending(File.GetLastWriteTimeUtc).Skip(10))File.Delete(old);
+                try
+                {
+                    var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
+                    var evidence=ForensicSnapshots.Capture(folder,cached);
+                    events.Add(66,"Info","Integrity-checked forensic snapshot",Path.GetFileName(evidence));
+                }
+                catch(Exception ex){events.Add(66,"Warning","Forensic capture failed",ex.Message);}
             }
-            // Never claim full coverage while required catalog capabilities remain unavailable or limited.
-            if(now>=nextReport&&!governor.DeferNonessentialDiskWork){AtomicFile.Write(Paths.At($"report-{now:yyyy-MM-dd}.md"),Reports.Generate(cached));nextReport=NextQuarter(now);events.Add(72,"Info","Quarterly report created","Saved in protected local storage");}
+            // Daily observations persist, missed complete-quarter reports catch up following a restart.
+            if(!governor.DeferNonessentialDiskWork&&historyObservedOn!=now.UtcDateTime.Date)
+            {
+                try
+                {
+                    var folder=Paths.At("reports");Paths.SecureDirectory(folder);
+                    var history=Path.Combine(folder,"daily-posture.json");
+                    QuarterlyHistory.Observe(history,cached);
+                    historyObservedOn=now.UtcDateTime.Date;
+                    foreach(var report in QuarterlyHistory.CreateDue(history,folder,now))
+                        events.Add(72,"Info","Quarterly posture report created",Path.GetFileName(report));
+                    nextReport=NextQuarter(now);
+                }
+                catch(Exception ex){events.Add(72,"Warning","Posture history or quarterly report failed",ex.Message);}
+            }
             }
         }
     }
@@ -171,14 +199,38 @@ public sealed class Engine : IDisposable
                 ?Good($"Official Feodo C2 IP source timestamp {intel.UpdatedUtc:O}; {intel.Addresses.Count} current indicators",LayerMode.Monitoring,"HTTPS transport and dated source are verified, but the feed is not cryptographically signed. Domain feeds and ruleset validation remain missing.")
                 :new(id,LayerMode.Unavailable,false,feed.Summary,"No stale or unverified indicators are used. No blocking policies are installed.");
             case 64:return Good("Log-integrity key is encrypted by machine DPAPI in administrator/SYSTEM-only storage",LayerMode.Enforcing,"Local administrators remain trusted; DPAPI is not off-device protection.");
-            case 66:return Good("High-severity events request a protected JSON snapshot on the next completed health cycle",LayerMode.Monitoring,"Preserves available layer health, recent events and process-associated TCP metadata; bounded to 10 snapshots. No full memory dump or guaranteed capture after abrupt power loss.");
-            case 67:return Good("Weighted capability-health score; unavailable/idle layers receive zero; not-applicable layers excluded",LayerMode.Auditing,"Score measures declared checks, not immunity or independently measured security effectiveness.");
-            case 68:return new(id,LayerMode.Idle,false,"Desktop supports verified encrypted, versioned selected-folder backups and report archives","User selection required; 5,000-file/60 MiB limit; no empty-directory, symlink, ACL or full-system image preservation. Same-machine backups are not independent protection.");
-            case 69:return Good("Separate UAC recovery executable and bundled offline recovery instructions",LayerMode.Auditing,"Not bootable recovery media; WinRE/boot media creation requires additional integration.");
-            case 70:return new(id,LayerMode.Idle,false,"Local bounded log archives; encrypted desktop report export available","Off-device shipping is not configured or implemented.");
-            case 71:return new(id,LayerMode.Idle,false,"Build-time regression suite; installed catalog/journal self-check available","Automatic post-update behavioral regression suite is not implemented.");
-            case 72:return Good($"Next automatic local report due {nextReport:yyyy-MM-dd}",LayerMode.Monitoring,"Service must be running; durable historical posture trends are incomplete.");
-            case 74:return Good("Desktop report generator includes all 79 layer states, evidence, limitations, and recent events",LayerMode.Auditing);
+            case 66:return Good("High-severity events request bounded, SHA-256-verified forensic snapshots on the next completed health cycle",LayerMode.Monitoring,"20 retained verified evidence files maximum; checksums detect damage but do not authenticate writer identity. Abrupt power loss may prevent capture.");
+            case 67:return Good("Weighted capability-health score, checked-sensor confidence and prioritized remediation in the dossier",LayerMode.Auditing,"Heuristic weights are not independently verified security effectiveness or risk probabilities.");
+            case 68:
+                var backupStatus=resilience.Status("backup");
+                return backupStatus.Enabled
+                    ?new(id,backupStatus.Healthy?LayerMode.Monitoring:LayerMode.Auditing,backupStatus.Healthy,
+                        backupStatus.Summary,"Explicit opt-in to daily AES-GCM external backups using machine-DPAPI-wrapped passphrase; 60 MiB limit, no ACL/empty-directory preservation. Last-run failure must be reviewed.")
+                    :new(id,LayerMode.Idle,false,"Optional scheduled external backups not configured; manual encrypted versions remain available",
+                        "User-selected folder and recoverable passphrase needed. No backups run without explicit authorization.");
+            case 69:
+                var kitPath=Paths.At("recovery-kit");
+                return File.Exists(Path.Combine(kitPath,"MANIFEST.md"))&&File.Exists(Path.Combine(kitPath,"RECOVERY_INSTRUCTIONS.md"))
+                    ?Good("Protected local recovery kit contains checked-copy manifest, printable instructions and OTS-owned config exports",LayerMode.Auditing,
+                        "Not bootable media. The executable may not be co-located with the service; use the installed UAC recovery shortcut.")
+                    :new(id,LayerMode.Unavailable,false,"Recovery kit manifest was not generated; installed standalone recovery tool may remain available.");
+            case 70:
+                var exportStatus=resilience.Status("export");
+                return exportStatus.Enabled
+                    ?new(id,exportStatus.Healthy?LayerMode.Monitoring:LayerMode.Auditing,exportStatus.Healthy,
+                        exportStatus.Summary,"Ships only closed rotated gzip segments. Successful local scheduling alone is not end-to-end delivery confirmation; removable/network destination must remain accessible.")
+                    :new(id,LayerMode.Idle,false,"Optional encrypted off-device log shipping not configured",
+                        "No remote destination is contacted until an administrator explicitly enables export.");
+            case 71:return new(id,LayerMode.Idle,false,"Build-time corruption, encrypted-export, recovery, overlap and backup regression tests; installed narrow self-check","Not every layer has independent Windows hardware/integration tests or post-update behavioral verification. Production gate remains open.");
+            case 72:
+                try
+                {
+                    var samples=QuarterlyHistory.Load(Path.Combine(Paths.At("reports"),"daily-posture.json"));
+                    return samples.Count>0?Good($"{samples.Count} daily historical posture readings; next quarter boundary {nextReport:yyyy-MM-dd}",LayerMode.Monitoring,"A running active service is required; missed days remain gaps and quarterly reports catch up on the next active cycle.")
+                        :new(id,LayerMode.Idle,false,"No completed historical reading yet","First active monitoring cycle will record a persistent sample.");
+                }
+                catch(Exception ex){return new(id,LayerMode.Unavailable,false,"Historical posture storage error: "+Wire.Clean(ex.Message));}
+            case 74:return Good("On-demand dossier contains all 79 layers, operational modes, evidence timestamps, limits and prioritized review items",LayerMode.Auditing,"This is service self-reporting, not independent hardware attestation.");
             default:return null;
         }
     }
