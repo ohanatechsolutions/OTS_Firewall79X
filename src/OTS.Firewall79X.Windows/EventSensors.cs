@@ -175,10 +175,30 @@ public sealed class EventSensors : IDisposable
                     break;
                 }
                 case 5157:
-                    var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);
+                {
+                    // WFP 5157 SourceAddress/SourcePort are LOCAL; DestAddress/DestPort are REMOTE.
+                    // Apply restrictions only on validated inbound TCP metadata.
+                    if(!BlockedConnectionEvent.TryParseInboundTcp(
+                        Get("Direction"),Get("SourceAddress"),Get("SourcePort"),
+                        Get("DestAddress"),Get("DestPort"),Get("Protocol"),out var blocked) || blocked==null)
+                        break;
+                    var address=blocked.RemoteAddress;
+                    var port=blocked.LocalPort;
                     networkGuard?.ObserveBlocked(address,Get("Direction"),port,now);
-                    events.Add(15,"Info","Windows blocked connection",$"Source {address}; destination port {port}. OS block observed; not attributed to OTS enforcement.");
-                    lock(sync){if(attempts.Count>4096)attempts.Clear();if(!attempts.TryGetValue(address,out var q))attempts[address]=q=new();q.Enqueue((now,port));while(q.Count>0&&(q.Peek().Time<now.AddMinutes(-1)||q.Count>1000))q.Dequeue();if(Detections.Scan(q.Select(x=>x.Port)))events.Add(3,"High","Possible port scan",$"Source {address}; distinct blocked destination ports within 60 seconds");if(q.Count>=100)events.Add(2,"High","High blocked-connection rate",$"Source {address}; {q.Count} blocked connection events in 60 seconds");}break;
+                    lock(sync)
+                    {
+                        if(attempts.Count>4096)attempts.Clear();
+                        if(!attempts.TryGetValue(address,out var q))attempts[address]=q=new();
+                        q.Enqueue((now,port));
+                        while(q.Count>0&&(q.Peek().Time<now.AddMinutes(-1)||q.Count>1000))q.Dequeue();
+                        if(Detections.Scan(q.Select(x=>x.Port)))
+                            events.Add(3,"High","Possible inbound TCP port scan",
+                                $"Remote {address} reached {q.Select(x=>x.Port).Distinct().Count()} distinct local ports in 60 seconds; Windows had already blocked each attempt.");
+                        if(q.Count>=100)events.Add(2,"Warning","High already-blocked inbound TCP rate",
+                            $"Remote {address}: {q.Count} blocked attempts in 60 seconds; no volumetric flood mitigation is claimed.");
+                    }
+                    break;
+                }
             }
         }
         else if(channel.Contains("Windows Defender"))
