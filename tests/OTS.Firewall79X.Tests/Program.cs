@@ -141,5 +141,53 @@ Test("TPM and BitLocker unknown-state handling",()=>{
     Assert(SecurityDeviceStates.VolumeProtected("0")==false);
     Assert(SecurityDeviceStates.VolumeProtected("2")==null);
 });
+
+Test("Section D parses genuine Security 4663 decimal/hex PIDs only",()=>{
+    Assert(EndpointSignals.AuditProcessId("0x3e8")==1000);
+    Assert(EndpointSignals.AuditProcessId("1000")==1000);
+    Assert(EndpointSignals.AuditProcessId("0")==null);
+    Assert(EndpointSignals.AuditProcessId("0xffffffff")==null);
+    Assert(EndpointSignals.AuditProcessId("not a pid")==null);
+});
+Test("Section D transfer correlation is PID/public address/state constrained",()=>{
+    var c=new Connection(42,"copy","[127.0.0.1]:1","[8.8.8.8]:443","Established");
+    Assert(EndpointSignals.PublicTcpForProcess(42,[c]));
+    Assert(!EndpointSignals.PublicTcpForProcess(41,[c]));
+    Assert(!EndpointSignals.PublicTcpForProcess(42,[c with{Remote="[192.168.1.1]:443"}]));
+    Assert(!EndpointSignals.PublicTcpForProcess(42,[c with{State="Listening"}]));
+});
+Test("Section D miner alerts require CPU persistence plus corroboration",()=>{
+    Assert(!EndpointSignals.MiningIndicator("chrome.exe",20,false));
+    Assert(!EndpointSignals.MiningIndicator("xmrig.exe",1,true));
+    Assert(EndpointSignals.MiningIndicator("xmrig.exe",3,false));
+    Assert(EndpointSignals.MiningIndicator("ordinary.exe",4,true));
+    Assert(!EndpointSignals.MiningIndicator("ordinary.exe",3,true));
+    Assert(EndpointSignals.PoolPortSeen(42,[new Connection(42,"example","[::]:1","[8.8.8.8]:3333","Established")]));
+});
+Test("Section D Defender indicators do not claim arbitrary input-hook detection",()=>{
+    Assert(EndpointSignals.DefenderKeyloggerIndicator("Trojan:Win32/Keylogger.A"));
+    Assert(EndpointSignals.DefenderKeyloggerIndicator("captures keystrokes"));
+    Assert(!EndpointSignals.DefenderKeyloggerIndicator("ordinary service update"));
+    Assert(!EndpointSignals.DefenderKeyloggerIndicator(new string('X',400)));
+});
+Test("Section D BCD parser flags only explicit weakening values",()=>{
+    Assert(BootPolicyAudit.Parse("testsigning Yes\n").WeakeningDetected);
+    Assert(BootPolicyAudit.Parse("nointegritychecks on\n").WeakeningDetected);
+    Assert(!BootPolicyAudit.Parse("testsigning No\n").WeakeningDetected);
+    Assert(!BootPolicyAudit.Parse("").Parsed);
+    Assert(!BootPolicyAudit.Parse("unrelated text").Parsed);
+});
+Test("Section D Docker audit distinguishes unverified TCP from verified setting",()=>{
+    Assert(DockerDaemonAudit.Parse("{\"hosts\":[\"tcp://0.0.0.0:2375\"]}").UnverifiedTcpHost);
+    Assert(!DockerDaemonAudit.Parse("{\"hosts\":[\"tcp://0.0.0.0:2376\"],\"tlsverify\":true}").UnverifiedTcpHost);
+    Assert(!DockerDaemonAudit.Parse("{\"hosts\":[\"npipe:////./pipe/docker_engine\"]}").UnverifiedTcpHost);
+    Assert(!DockerDaemonAudit.Parse("{invalid}").Parsed);
+});
+Test("Section D execution indicators require suspicious command or parent lineage",()=>{
+    Assert(Detections.ExecutionIndicator("powershell.exe","Get-Date","winword.exe")!=null);
+    Assert(Detections.ExecutionIndicator("powershell.exe","Get-Date","explorer.exe")==null);
+    Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
+    Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
