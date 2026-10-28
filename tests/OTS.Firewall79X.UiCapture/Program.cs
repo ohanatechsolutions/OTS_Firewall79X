@@ -12,11 +12,14 @@ internal static class Program
     {
         if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")return 2;
         var output=Path.GetFullPath(args.Length>0?args[0]:"artifacts/ui");Directory.CreateDirectory(output);
-        var app=new App();app.InitializeComponent();app.StartupUri=null;
-        var window=new MainWindow { Width=1380,Height=980,WindowStartupLocation=WindowStartupLocation.Manual,Left=0,Top=0 };
+        Application.ResourceAssembly=typeof(App).Assembly;
+        var app=new App();app.InitializeComponent();
         var exit=0;
-        window.Loaded+=async (_,_)=>
+        app.Startup+=async (_,_)=>
         {
+            await Task.Delay(500);
+            if(app.MainWindow is not MainWindow window){Console.Error.WriteLine("Main window did not start");exit=1;app.Shutdown();return;}
+            window.Width=1380;window.Height=980;window.Left=0;window.Top=0;
             try
             {
                 await Task.Delay(2500);
@@ -37,7 +40,7 @@ internal static class Program
             catch(Exception ex){Console.Error.WriteLine(ex);exit=1;}
             finally{window.Close();app.Shutdown();}
         };
-        app.Run(window);return exit;
+        app.Run();return exit;
     }
     private static void Capture(Window window,string path,double scale=1)
     {
