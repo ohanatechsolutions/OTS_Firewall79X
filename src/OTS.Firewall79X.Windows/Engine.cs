@@ -163,5 +163,5 @@ public sealed class Engine : IDisposable
             default:return null;
         }
     }
-    public void Dispose(){deception?.Dispose();sensors?.Dispose();feed.Dispose();}
+    public void Dispose(){deception?.Dispose();sensors?.Dispose();feed.Dispose();checks.Dispose();}
 }
