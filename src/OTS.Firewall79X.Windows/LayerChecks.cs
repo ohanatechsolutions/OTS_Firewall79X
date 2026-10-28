@@ -191,22 +191,28 @@ public sealed class LayerChecks
                 if(!endpoints.ObservedAnyDockerService&&endpoints.TlsCandidates==0)return Na(id,"No recognized Docker/containerd service or common 2375/2376 management listener detected; WSL/remote engines not assessed");
                 return Good(id,$"{container.Count} container service records; {endpoints.TlsCandidates} possible TLS management listeners (TCP 2376); no TCP 2375 detected",
                     LayerMode.Auditing,"TCP 2376 does not prove TLS or certificate verification. Container privilege, bind mounts, WSL2 port forwarding and service pipe ACLs require additional checks.");
-            case 41:return Channel(id,"Security","Alerts on eight failed logins per source in two minutes; automatic source bans withheld to avoid lockout.");
+            case 41:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Security event subscription unavailable: no verified remote login protection");
+                var audit41=AuditPolicy.Coverage(41);
+                if(!audit41.Enabled)return Missing(id,audit41.Evidence);
+                return Good(id,$"Observed {Sensors.ObservedRemoteLogonFailures} verified public-source remote failed logins; bounded per-source correlation, threshold=8 failures in 2 minutes, alerts deduplicated for 5 minutes",
+                    LayerMode.Monitoring,"Windows Security Event 4625 types 3/10 only; unsupported services and nonpublic sources are not attributed. No automatic IP restriction: unverified bans can lock out legitimate remote administrators.");
             case 42:
-                var config=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ssh","sshd_config");
-                if(!File.Exists(config))return Na(id,"Default Windows sshd_config not found; custom -f configuration, OpenSSH service state and listening endpoints require separate verification");
-                if(new FileInfo(config).Length>256*1024)return Missing(id,"OpenSSH configuration exceeds bounded review size");
-                var ssh=OpenSshPolicyAudit.Parse(File.ReadAllText(config));
-                var info=$"Global sshd directives: password authentication={ssh.PasswordAuthentication?.ToString()??"unspecified"}, public-key authentication={ssh.PublicKeyAuthentication?.ToString()??"unspecified"}, empty passwords={ssh.PermitEmptyPasswords?.ToString()??"unspecified"}, Include/Match={ssh.RequiresEffectiveVerification}";
-                if(ssh.ExplicitWeakness)return Bad(id,info+"; explicitly permissive global authentication directive detected",
-                    "OpenSSH's effective -T output, includes, Match contexts, startup -f settings and key-file ACLs have not been verified.");
-                return ssh.ExplicitlyHardened
-                    ?Good(id,info,LayerMode.Auditing,"Global configuration is explicitly restrictive, but effective -T settings, service arguments, key ACLs and port exposure still need independent verification.")
-                    :Missing(id,info+"; insufficient evidence to claim SSH is hardened. Conditional Include/Match settings and defaults require an effective sshd -T audit.");
-            case 43:return new(id,LayerMode.Idle,false,"Optional password check is available in the desktop interface; no password provided","Uses SHA-1 range queries only when requested; plaintext is never uploaded.");
+                var sshAudit=SshEffectiveAudit.Read(Connections);
+                return new(id,sshAudit.Mode,sshAudit.Healthy,sshAudit.Evidence,sshAudit.Limitations);
+            case 43:
+                return new(id,LayerMode.Idle,false,"Optional password range lookup is idle; the user must explicitly request a check",
+                    "Only five SHA-1 hex prefix characters are submitted to the range endpoint with padding; responses are size- and format-validated. No password is stored or sent. Requires internet access.");
             case 44:
-                var accounts=SystemQueries.Wmi("root\\cimv2","SELECT Name,Disabled,PasswordRequired FROM Win32_UserAccount WHERE LocalAccount=True","Name","Disabled","PasswordRequired");int weak=accounts.Count(a=>a["Disabled"]=="False"&&a["PasswordRequired"]=="False");Changed(id,"Local account state",accounts);return weak>0?Bad(id,$"{weak} enabled accounts do not require passwords", "Account policy flags do not establish actual password strength or staleness."):Good(id,$"{accounts.Count} local accounts audited",LayerMode.Auditing,"Does not inspect password contents, domain policies, or account staleness.");
-            case 45:return Channel(id,"Security","Monitors login, failed login, and special-privilege assignment events.");
+                var accountAudit=LocalAccountSecurityAudit.Read();
+                Changed(id,"Local account, administrator and password policy baseline",accountAudit.Baseline);
+                return new(id,LayerMode.Auditing,accountAudit.Healthy,accountAudit.Evidence,accountAudit.Limitations);
+            case 45:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security log collector unavailable");
+                var audit45=AuditPolicy.Coverage(45);
+                if(!audit45.Enabled)return Missing(id,audit45.Evidence);
+                return Good(id,$"Verified logon/failed-logon audit policy and Security event subscription; {Sensors.ObservedLoginSecurityEvents} account access/privilege events observed",
+                    LayerMode.Monitoring,"Classifies interactive, network, unlock, remote interactive and cached logons; watches explicit credentials, privileged logons, account changes, and token elevation when process creation is audited. Security event logging and provider configuration determine coverage.");
             case 46:
                 var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
                 var hardening=HostHardeningAudit.Read();var hardware=DeviceStatus();
