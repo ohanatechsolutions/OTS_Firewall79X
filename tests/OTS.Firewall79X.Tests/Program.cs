@@ -422,5 +422,18 @@ Test("Audited canary file access requires exact 4663 object identity and rights"
     Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"bad").Read);
     Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"0x80").Read);
 });
+Test("Windows Firewall single-host address normalization remains exact",()=>{
+    Assert(TemporaryRuleIdentity.IsExactHost("8.8.8.8","8.8.8.8"));
+    Assert(TemporaryRuleIdentity.IsExactHost("8.8.8.8/32","8.8.8.8"));
+    Assert(TemporaryRuleIdentity.IsExactHost("8.8.8.8/255.255.255.255","8.8.8.8"));
+    Assert(TemporaryRuleIdentity.IsExactHost("2606:4700:4700::1111/128","2606:4700:4700::1111"));
+    Assert(!TemporaryRuleIdentity.IsExactHost("8.8.8.0/24","8.8.8.8"));
+    Assert(!TemporaryRuleIdentity.IsExactHost("*","8.8.8.8"));
+    Assert(!TemporaryRuleIdentity.IsExactHost("8.8.8.8,1.1.1.1","8.8.8.8"));
+    Assert(!TemporaryRuleIdentity.IsExactHost("8.8.8.8/16","8.8.8.8"));
+    Assert(TemporaryRuleIdentity.IsOwned(
+      TemporaryRuleIdentity.InboundPrefix+"8.8.8.8",TemporaryRuleIdentity.Marker+"inbound",
+      TemporaryRuleIdentity.Group,"8.8.8.8/255.255.255.255",1,0,256));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}

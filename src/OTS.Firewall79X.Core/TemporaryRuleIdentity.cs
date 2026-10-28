@@ -20,6 +20,22 @@ public static class TemporaryRuleIdentity
         name?.StartsWith(InboundPrefix,StringComparison.Ordinal)==true ||
         name?.StartsWith(OutboundPrefix,StringComparison.Ordinal)==true;
 
+    /// <summary>Windows Firewall may canonicalize one-host selectors to /32 or
+    /// /255.255.255.255 (IPv4) or /128 (IPv6). No ranges, groups, wildcard,
+    /// subnets, or comma-delimited additional selectors are trusted.</summary>
+    public static bool IsExactHost(string? reported,string? expected)
+    {
+        if(!NetworkAbuseWindow.EligiblePublicSource(expected) ||
+           !IPAddress.TryParse(expected,out var ip) ||
+           string.IsNullOrWhiteSpace(reported))return false;
+        var canonical=ip.ToString();
+        if(reported.Equals(canonical,StringComparison.OrdinalIgnoreCase))return true;
+        string cidr=canonical+(ip.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork?"/32":"/128");
+        if(reported.Equals(cidr,StringComparison.OrdinalIgnoreCase))return true;
+        return ip.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork &&
+            reported.Equals(canonical+"/255.255.255.255",StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsOwned(string? name,string? description,string? group,
         string? remoteAddresses,int direction,int action,int protocol)
     {
@@ -27,8 +43,7 @@ public static class TemporaryRuleIdentity
         bool inbound=name!.StartsWith(InboundPrefix,StringComparison.Ordinal);
         string suffix=name[(inbound?InboundPrefix:OutboundPrefix).Length..];
         if(!NetworkAbuseWindow.EligiblePublicSource(suffix) ||
-           !IPAddress.TryParse(remoteAddresses,out var remote) ||
-           !suffix.Equals(remote.ToString(),StringComparison.Ordinal) ||
+           !IsExactHost(remoteAddresses,suffix) ||
            direction!=(inbound?1:2) || action!=0 || protocol!=256)return false;
         // Allow narrowly specified legacy rules from earlier preview builds to
         // be reclaimed without deleting arbitrary similarly named user rules.

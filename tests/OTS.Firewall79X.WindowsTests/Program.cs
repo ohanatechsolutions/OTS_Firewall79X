@@ -27,13 +27,13 @@ try
             for(int i=0;i<20;i++)guard.ObserveBlocked("8.8.8.8","%%14592",1000+i,now.AddMilliseconds(i));
             if(guard.ActiveRules!=1)throw new Exception("Inbound WFP-source rule was not installed exactly once: "+guard.Health);
             var inbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.InboundPrefix+"8.8.8.8").ToArray();
-            if(inbound.Length!=1||inbound[0].Direction!="1"||inbound[0].Action!="0"||inbound[0].RemoteAddresses!="8.8.8.8")
-                throw new Exception("Installed inbound Windows Firewall rule has incorrect direction, action or exact remote address");
+            if(inbound.Length!=1||inbound[0].Direction!="1"||inbound[0].Action!="0"||!TemporaryRuleIdentity.IsExactHost(inbound[0].RemoteAddresses,"8.8.8.8"))
+                throw new Exception("Installed inbound Windows Firewall rule mismatch: "+string.Join(";",inbound.Select(x=>$"{x.Name}: dir={x.Direction},action={x.Action},remote={x.RemoteAddresses}")));
             if(!guard.BlockObservedIntelligence("1.1.1.1",now)||guard.IntelligenceRules!=1)
                 throw new Exception("Reactive outbound intelligence rule was not installed: "+guard.Health);
             var outbound=new FirewallAudit().Read().Rules.Where(x=>x.Name==TemporaryRuleIdentity.OutboundPrefix+"1.1.1.1").ToArray();
-            if(outbound.Length!=1||outbound[0].Direction!="2"||outbound[0].Action!="0"||outbound[0].RemoteAddresses!="1.1.1.1")
-                throw new Exception("Installed outbound Windows Firewall rule has incorrect direction, action or exact destination");
+            if(outbound.Length!=1||outbound[0].Direction!="2"||outbound[0].Action!="0"||!TemporaryRuleIdentity.IsExactHost(outbound[0].RemoteAddresses,"1.1.1.1"))
+                throw new Exception("Installed outbound Windows Firewall rule mismatch: "+string.Join(";",outbound.Select(x=>$"{x.Name}: dir={x.Direction},action={x.Action},remote={x.RemoteAddresses}")));
             guard.Sweep(now.AddMinutes(6),false);
             if(guard.ActiveRules!=0||guard.IntelligenceRules!=0)
                 throw new Exception("Expired inbound/intelligence Windows Firewall rules not cleared: "+guard.Health);

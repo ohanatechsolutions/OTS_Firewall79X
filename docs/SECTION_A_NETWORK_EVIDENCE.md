@@ -91,3 +91,7 @@ Added `IpPacketValidator.Inspect` as a bounded, memory-safe pure IPv4/IPv6 parse
 ## Live Windows firewall COM lifecycle acceptance probe (CI-only)
 
 A dedicated disposable-Windows-runner probe now requires `GITHUB_ACTIONS=true`, administrator privileges, and a **disabled** OTS service. It simulates validated blocked-event metadata, verifies the exact installed inbound source rule and reactive outbound intelligence rule through the real Windows Firewall COM API, advances expiration, and confirms removal plus complete absence of OTS-owned rules. The existing smoke-test baseline then checks that all unrelated Windows rules remained unchanged. This is **rule creation/rollback testing**, not a live SYN/UDP flood, IP spoofing attempt, or measured packet drop. It must not run on a personal machine.
+
+### Windows Firewall single-host selector normalization
+
+The ownership verifier accepts only a literal single IP, its exact one-host CIDR (/32 or /128), or its IPv4 all-ones netmask variant. It still rejects wildcard, broad subnet, ranges and multi-address selectors. The disposable Windows probe now reports the observed COM fields on mismatch, rather than a generic assertion.
