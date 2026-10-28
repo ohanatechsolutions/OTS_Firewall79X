@@ -218,7 +218,7 @@ Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and
         TrustedArtifacts.Verify(Signed(manifest with{Files=[new TrustedArtifacts.Artifact("../update.bin",1,digest)]},publisher),
             key,folder,new Version(1,0),now));
     File.WriteAllText(file,"tampered bytes");
-    Throws<InvalidDataException>(()=>
+    Throws<System.Security.Cryptography.CryptographicException>(()=>
         TrustedArtifacts.Verify(envelope,key,folder,new Version(1,0),now));
     Throws<InvalidDataException>(()=>
         TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
