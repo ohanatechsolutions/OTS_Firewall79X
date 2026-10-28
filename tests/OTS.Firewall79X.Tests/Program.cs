@@ -539,6 +539,13 @@ Test("Section G: exact owned-rule identities never delete drifted or lookalike p
     Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.255"));
     Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/32"));
     Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.0"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("8.8.8.8/16","8.8.8.8"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("8.8.8.8/0","8.8.8.8"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("8.8.8.8/33","8.8.8.8"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("8.8.8.8-8.8.8.9","8.8.8.8"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("8.8.8.8;1.1.1.1","8.8.8.8"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("8.8.8.8 ","8.8.8.8"));
+    Assert(!OwnedFirewallRule.ExactHostAddress("*","8.8.8.8"));
     Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/24"));
     Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8,1.1.1.1"));
     Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4/255.255.255.255"));
