@@ -476,6 +476,8 @@ Test("Temporary firewall ownership requires exact structured fields, not name pr
     const string src="8.8.4.4";
     var name=TemporaryRuleIdentity.InboundPrefix+src;
     Assert(TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,1,0,256));
+    Assert(TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src+"/255.255.255.255",1,0,256));
+    Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src+"/255.255.255.0",1,0,256));
     Assert(!TemporaryRuleIdentity.IsOwned(name,"someone else's rule",TemporaryRuleIdentity.Group,src,1,0,256));
     Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,"*",1,0,256));
     Assert(!TemporaryRuleIdentity.IsOwned(name,TemporaryRuleIdentity.Marker+"inbound",TemporaryRuleIdentity.Group,src,2,0,256));
@@ -592,6 +594,12 @@ Test("Section G: exact owned-rule identities never delete drifted or lookalike p
         int profiles=int.MaxValue,bool enabled=true)=>
         OwnedFirewallRule.Matches(name,description,remote,direction,action,protocol,profiles,enabled);
     Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8"));
+    Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.255"));
+    Assert(Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/32"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8/255.255.255.0"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.8.8,1.1.1.1"));
+    Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4/255.255.255.255"));
+    Assert(Mine(intel+"1.1.1.1",OwnedFirewallRule.IntelligenceDescription,"1.1.1.1/255.255.255.255",2));
     Assert(Mine(intel+"1.1.1.1",OwnedFirewallRule.IntelligenceDescription,"1.1.1.1",2));
     Assert(!Mine(prefix+"8.8.8.8","modified by third party","8.8.8.8"));
     Assert(!Mine(prefix+"8.8.8.8",OwnedFirewallRule.InboundDescription,"8.8.4.4"));
