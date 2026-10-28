@@ -1,0 +1,65 @@
+# Section A — Network protection engineering evidence
+
+This change strengthens **only** the inbound-source restriction path for layers 2 and 3.
+It does **not** satisfy the full network-protection acceptance criteria. These are
+security capabilities, not a count of completed catalog entries.
+
+## New behavior
+- Windows Security **5157** telemetry is consumed only when the **inbound direction
+  field is explicitly %%14592**. Outbound events, malformed ports, private,
+  loopback, link-local, documentation, reserved and IPv4-mapped IPv6 addresses are
+  ineligible; local interface, DNS, DHCP and gateway addresses are rechecked
+  immediately before installation.
+- Twelve distinct blocked destination ports within 60 seconds create a scan alert.
+  A more conservative threshold of **20 distinct ports** or **150 blocked attempts
+  on at least four ports** within one minute triggers an exact-source temporary
+  restriction. These are **already blocked connection events**, not raw packets.
+- The registered SYSTEM service installs a five-minute Windows Firewall inbound
+  *block* rule for only the offending IP. Each rule has a unique OTS-owned name.
+  Thirty-two simultaneous rules maximum, a 20-minute retry cooldown, and a bounded
+  observation history. Existing rules, profile defaults and Windows Defender are
+  left alone.
+- OTS removes its own rules on clean stack OFF and on service restart, and attempts
+  expiration cleanup while running. Errors are logged instead of represented as
+  successful enforcement. No OTS blocked-packet statistics are fabricated.
+
+## Required limitations and outstanding acceptance
+- Layer **1**: audit of firewall default inbound deny is not an independent
+  validation of rule precedence, statefulness, exceptions or all managed policies.
+- Layer **2**: event-triggered *source restrictions* are **not** SYN flood, ICMP,
+  UDP volumetric, connection-rate, or link-saturation mitigation. WFP callout
+  packet telemetry and lab flood tests are outstanding.
+- Layer **3**: source rules are conditional on filtering-platform failure auditing;
+  legitimate load, NAT and false-positive scenarios still require physical-host
+  trials. A COM-created rule survives a hard service failure until service
+  recovery; this is **not crash-atomic**, unlike a WFP dynamic session.
+- Layer **4**: no OTS packet parsing or IPv6 extension/fragment validation.
+  Windows TCP/IP filtering must not be misreported as an OTS engine.
+- Layer **5**: Feodo feed remains *monitoring-only*. HTTPS is not a signed
+  intelligence artifact, IPv6 feed indicators are absent, and automated blocking,
+  provider validation and allowlist controls remain outstanding.
+- Layer **6**: IPv4/IPv6 firewall profile coverage is not feature or telemetry
+  parity. Full UDP, ICMPv6, neighbor and flow-telemetry tests remain outstanding.
+- Layer **7**: metadata protection remains environment-aware read-only
+  classification. Cloud-specific exclusions and tested safe policies are needed.
+- Layer **8**: DNS rebinding remains a warning detector. DoH, VPN, private
+  split-horizon, alternate resolvers and a safe interception/prevention mechanism
+  remain to be implemented. DNS Client event support alone is not prevention.
+- Layer **9**: untrusted network/sharing hardening requires profile-aware
+  policy verification on real Windows systems.
+- Layer **10**: Bluetooth PnP inventory and change alerts are not independent
+  pairing authorization, discoverability or connection attestation.
+
+## Verification
+Core regression tests cover inbound direction, eligible IPv4/IPv6 addresses,
+documentation/private exclusions, threshold hysteresis and cooldown. Windows CI
+compiles both projects; full physical Windows 10/11 Home checks, diverse adapters,
+VPN/cloud cases, security-log policy variation, and network protocol simulations
+are required before claiming Section A is fully complete.
+
+## Emergency recovery
+If a Windows crash leaves a temporary rule behind and the service does not
+restart, identify rules beginning with **OTS Firewall79X temporary inbound source**
+in Windows Defender Firewall with Advanced Security. Remove *only* rules with
+this exact prefix, or restart the OTS service to attempt owner-scoped cleanup.
+Do not disable the Windows Firewall to recover connectivity.

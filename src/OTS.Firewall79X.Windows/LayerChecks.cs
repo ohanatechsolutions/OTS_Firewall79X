@@ -11,6 +11,8 @@ public sealed class LayerChecks
     private readonly Dictionary<string,List<DateTimeOffset>> connectionsHistory=[];
     private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start)> processSamples=[];
     public EventSensors? Sensors {get;set;}
+    public TemporaryFirewallGuard? NetworkGuard {get;set;}
+    private HashSet<string>? bluetoothPrevious;
     public FeodoThreatFeed? ThreatFeed {get;set;}
     private readonly HashSet<string> intelAlerts=[];
     private SecurityDeviceAudit.Result? deviceSnapshot;
@@ -82,12 +84,17 @@ public sealed class LayerChecks
     {
         switch(id)
         {
-            case 1:case 6:case 9:
+            case 1:
                 if(firewall==null)return Missing(id,"Windows Firewall state could not be read");
-                return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Enforcement is provided by existing Windows Firewall policy. Existing exceptions are preserved. OTS does not automatically overwrite profile settings."):Bad(id,firewall.Value.Description,"Some profiles are disabled or allow inbound by default; automatic policy replacement is withheld to preserve management access.");
-            case 2:return Channel(id,"Security","Detects high rates of logged blocked connections; does not rate-limit SYN/ICMP/UDP floods or prevent link saturation.");
-            case 3:return Channel(id,"Security","Detects 12 distinct blocked destination ports per source within 60 seconds; alerts without automatic bans.");
-            case 4:return Missing(id,"Packet-level anti-spoofing and malformed-packet inspection are not implemented. Windows TCP/IP validation is not claimed as an OTS layer.");
+                return firewall.Value.Safe?Good(id,firewall.Value.Description,LayerMode.Enforcing,"Windows Firewall is enforcing inbound default deny on all three profiles. Rule precedence, policy conflicts, exceptions and statefulness are not independently certified."):Bad(id,firewall.Value.Description,"One or more profiles allow inbound or have firewall disabled. No automatic blanket policy overwrite.");
+            case 2:case 3:
+                if(Sensors?.Has("Security")!=true)return Missing(id,"Windows Security event subscription is unavailable");
+                if(!AuditPolicy.Coverage(id).Enabled)return Missing(id,"Filtering Platform Connection failure auditing is disabled; source restrictions are not reliably triggered.");
+                if(NetworkGuard?.Operational!=true)return Missing(id,"Temporary Windows Firewall source restriction API unavailable: "+(NetworkGuard?.Health??"not started"));
+                return id==2
+                    ?Good(id,$"Event-correlated source restrictions active; {NetworkGuard.ActiveRules} temporary inbound rules",LayerMode.Monitoring,"Not SYN, UDP, ICMP, connection-rate or link-saturation mitigation; only Windows 5157 already-blocked connections are observed.")
+                    :Good(id,$"Validated inbound scan alerting and exact-source five-minute blocks; {NetworkGuard.ActiveRules} temporary rules",LayerMode.Enforcing,"Uses already-blocked Windows 5157 events; 20-port/150-event thresholds and cooldown reduce but do not eliminate false positives; a hard crash can leave rules until service recovery.");
+            case 4:return Missing(id,"No supported WFP callout/packet parser for ingress spoofing, malformed IPv4/IPv6 headers, extension chains or fragments; Windows TCP/IP validation is not claimed as an OTS packet-inspection engine.");
             case 5:
                 return ThreatFeed?.Active is { } intel
                     ?Good(id,$"Observation-only: {intel.Addresses.Count} recent Feodo Tracker C2 IPv4 indicators; established outbound TCP connections compared each scan",LayerMode.Monitoring,"No source-blocking rules, domain intelligence, full UDP visibility or signed-feed proof. Only currently fresh source timestamps are accepted.")
@@ -103,8 +110,13 @@ public sealed class LayerChecks
                     ?Good(id,$"{Sensors.ObservedDnsResponses} actual DNS Client 3008 response events correlated for public-to-private address transitions",LayerMode.Monitoring,"Heuristic warning only: may miss DoH, alternate resolvers and queries without Event 3008; split-horizon networks can trigger legitimate changes. No DNS interception or rebinding block is applied.")
                     :Missing(id,"DNS Client subscription exists, but no valid address-bearing Event 3008 responses have been observed; rebinding telemetry is unverified.");
             case 10:
-                var bt=SystemQueries.Wmi("root\\cimv2","SELECT Name,Status FROM Win32_PnPEntity WHERE PNPClass='Bluetooth'","Name","Status");Changed(id,"Bluetooth device inventory",bt);
-                return bt.Count==0?Na(id,"No Bluetooth device reported by Windows"):Good(id,$"{bt.Count} Bluetooth devices observed",LayerMode.Monitoring,"Inventory changes only; pairing authorization and discoverability hardening are not implemented.");
+                var bt=SystemQueries.Wmi("root\\cimv2","SELECT Name,Status,PNPDeviceID FROM Win32_PnPEntity WHERE PNPClass='Bluetooth'","Name","Status","PNPDeviceID");
+                var currentBt=bt.Select(x=>x.GetValueOrDefault("PNPDeviceID","")).Where(x=>x.Length>0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if(bluetoothPrevious!=null)
+                    foreach(var device in currentBt.Except(bluetoothPrevious).Take(32))
+                        events.Add(10,"Warning","New Bluetooth PnP device observed","Device inventory changed; pairing/discoverability and connection authorization are not attested. ID fingerprint "+SystemQueries.Fingerprint(device)[..16]);
+                bluetoothPrevious=currentBt;Changed(id,"Bluetooth device inventory",bt);
+                return bt.Count==0?Na(id,"No Bluetooth device reported by Windows"):Good(id,$"{bt.Count} Bluetooth PnP entries and changes monitored",LayerMode.Monitoring,"A PnP addition is not proof of new pairing. Discoverability, pairing authorization and active connection telemetry require a supported native monitor and hardware validation.");
             case 11:case 12:case 13:return Missing(id,"Deception monitor has not reported health");
             case 14:return Missing(id,"An established packet intrusion-detection engine and validated network signature set are not yet integrated.");
             case 15:return Channel(id,"Security","Classifies supported Windows authentication, privilege, and blocked-connection events; broad ATT&CK correlation is incomplete.");
