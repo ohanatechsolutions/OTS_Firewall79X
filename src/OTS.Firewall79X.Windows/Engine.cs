@@ -57,6 +57,12 @@ public sealed class Engine : IDisposable
         {
             journal.Apply(WindowsSettings.AutoRun,"255");sensors=new(events);sensors.Start();checks.Sensors=sensors;deception=new(events);
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
+            try
+            {
+                var kit=Paths.At("recovery-kit");Paths.SecureDirectory(kit);
+                RecoveryKit.Create(kit,AppContext.BaseDirectory,Paths.Root);
+            }
+            catch(Exception ex){events.Add(69,"Warning","Local recovery kit generation failed",ex.Message);}
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
             events.Add(47,"Info","Protection activated","Narrow AutoRun hardening applied with rollback; system firewall policy preserved");
         }
@@ -172,7 +178,12 @@ public sealed class Engine : IDisposable
             case 66:return Good("High-severity events request a bounded, SHA-256-verified forensic snapshot on the next completed health cycle",LayerMode.Monitoring,"20 retained verified evidence files maximum; checksums detect damage but are not cryptographic attestations against administrators. Abrupt power loss may prevent capture.");
             case 67:return Good("Weighted capability-health score, checked-sensor confidence, and prioritized unverified-layer review items",LayerMode.Auditing,"Weighting is a policy heuristic; results are not independent security effectiveness, malware resistance, or risk probabilities.");
             case 68:return new(id,LayerMode.Idle,false,"Desktop supports verified encrypted, non-overwriting folder backup versions including last-modified timestamps","User selection required; no scheduled credential vault yet; 5,000-file/60 MiB limit; empty folders, symlinks, ACLs and full-system images are not preserved.");
-            case 69:return Good("Separate UAC recovery executable and bundled offline recovery instructions",LayerMode.Auditing,"Not bootable recovery media; WinRE/boot media creation requires additional integration.");
+            case 69:
+                var kitPath=Paths.At("recovery-kit");
+                return File.Exists(Path.Combine(kitPath,"MANIFEST.md"))&&File.Exists(Path.Combine(kitPath,"RECOVERY_INSTRUCTIONS.md"))
+                    ?Good("Local recovery kit contains a verified-copy manifest, printable instructions, script and OTS-owned configuration export",LayerMode.Auditing,
+                        "Not bootable rescue media. The recovery executable may be absent from the generated kit when not co-located with the service; use the installed UAC recovery shortcut.")
+                    :new(id,LayerMode.Unavailable,false,"Recovery kit manifest was not generated; installed standalone recovery tool may remain available.");
             case 70:return new(id,LayerMode.Idle,false,"Encrypted log export queue supports verified copy, optional removable/network destinations and retry","No off-device destination or recoverable passphrase is configured by default; service auto-shipping requires explicit administrator opt-in and remains inactive.");
             case 71:return new(id,LayerMode.Idle,false,"Build-time positive, negative, corruption, encrypted-export, backup and recovery regressions; installed narrow self-check", "Not every layer has independent Windows hardware/integration tests or post-update behavioral verification. Production gate remains open.");
             case 72:
