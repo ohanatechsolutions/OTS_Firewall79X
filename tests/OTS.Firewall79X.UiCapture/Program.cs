@@ -28,9 +28,9 @@ internal static class Program
                 {
                     tabs.SelectedIndex=i;await Task.Delay(350);window.UpdateLayout();
                     Capture(window,Path.Combine(output,$"{i:00}-desktop.png"));
-                    if(i==0)Capture(window,Path.Combine(output,"08-dashboard-8k.png"),7680/((FrameworkElement)window.Content).ActualWidth);
+                    if(i==0)Capture(window,Path.Combine(output,"08-dashboard-8k.png"),1380,900,7680.0/1380);
                 }
-                tabs.SelectedIndex=0;window.Width=1000;window.Height=700;await Task.Delay(350);window.UpdateLayout();Capture(window,Path.Combine(output,"07-compact.png"));
+                tabs.SelectedIndex=0;window.Width=1000;window.Height=700;await Task.Delay(350);window.UpdateLayout();Capture(window,Path.Combine(output,"07-compact.png"),1000,700);
                 // Search must still route to the real filtered layer list.
                 var search=(TextBox)window.FindName("LayerSearch");search.Text="79";
                 if(tabs.SelectedIndex!=1)throw new InvalidOperationException("Search did not open security layers");
@@ -42,9 +42,10 @@ internal static class Program
         };
         app.Run();return exit;
     }
-    private static void Capture(Window window,string path,double scale=1)
+    private static void Capture(Window window,string path,double width=1380,double height=900,double scale=1)
     {
         var root=(FrameworkElement)window.Content;
+        root.Width=width;root.Height=height;root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();
         var bitmap=new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth*scale),(int)Math.Ceiling(root.ActualHeight*scale),96*scale,96*scale,PixelFormats.Pbgra32);
         bitmap.Render(root);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(path);png.Save(file);
     }
