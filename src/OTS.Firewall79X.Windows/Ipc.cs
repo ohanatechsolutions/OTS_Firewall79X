@@ -34,10 +34,10 @@ public static class Ipc
                 using var pipe=NamedPipeServerStreamAcl.Create(PipeName,PipeDirection.InOut,4,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,8192,8192,acl);
                 await pipe.WaitForConnectionAsync(ct);
                 using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(5));
-                var request=await Wire.ReadAsync<Request>(pipe,1024,timeout.Token);
+                var request=await Wire.ReadAsync<Request>(pipe,8192,timeout.Token);
                 bool admin=false;pipe.RunAsClient(()=>{using var identity=WindowsIdentity.GetCurrent(true);if(identity!=null)admin=new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);});
                 Response result;
-                if(!Wire.Commands.Contains(request.Command)) result=new(false,"Unknown command");
+                if(!Wire.ValidRequest(request)) result=new(false,"Invalid or unauthorized request shape");
                 else if(Wire.RequiresAdmin(request.Command)&&!admin)result=new(false,"Administrator authorization is required");
                 else result=handle(request);
                 await Wire.WriteAsync(pipe,result,timeout.Token);
