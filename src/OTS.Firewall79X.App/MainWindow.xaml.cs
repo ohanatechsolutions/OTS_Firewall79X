@@ -131,16 +131,48 @@ public partial class MainWindow : Window
     }
     private async void BreachClick(object sender,RoutedEventArgs e)
     {
-        var password=BreachPassword.Password;BreachPassword.Clear();if(password.Length==0)return;
+        var password=BreachPassword.Password;BreachPassword.Clear();
+        if(password.Length==0)return;
+        byte[]? secret=null;
+        string prefix,suffix;
         try
         {
-            string hash=Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(password)));password="";
-            using var req=new HttpRequestMessage(HttpMethod.Get,"https://api.pwnedpasswords.com/range/"+hash[..5]);req.Headers.Add("Add-Padding","true");
-            using var response=await http.SendAsync(req);response.EnsureSuccessStatusCode();var body=await response.Content.ReadAsStringAsync();long count=0;
-            foreach(var line in body.Split('\n')){var pair=line.Trim().Split(':');if(pair.Length==2&&pair[0].Equals(hash[5..],StringComparison.OrdinalIgnoreCase))long.TryParse(pair[1],out count);}
-            BreachResult.Text=count>0?$"This password appears {count:N0} times in the breach corpus. Change it wherever used.":"No match returned. This does not prove the password is strong or has never been exposed.";
+            secret=Encoding.UTF8.GetBytes(password);
+            password=string.Empty;
+            (prefix,suffix)=PasswordBreachRange.ComputeRange(secret);
         }
-        catch(Exception ex){BreachResult.Text="Check failed: "+ex.Message;}
+        catch(ArgumentOutOfRangeException)
+        {
+            BreachResult.Text="Password input must be between 1 and 4,096 UTF-8 bytes.";return;
+        }
+        finally
+        {
+            if(secret!=null)CryptographicOperations.ZeroMemory(secret);
+            password=string.Empty;
+        }
+        try
+        {
+            BreachResult.Text="Checking the password prefix against the breach service…";
+            using var req=new HttpRequestMessage(HttpMethod.Get,
+                "https://api.pwnedpasswords.com/range/"+prefix);
+            req.Headers.Add("Add-Padding","true");
+            req.Headers.CacheControl=new System.Net.Http.Headers.CacheControlHeaderValue{NoStore=true,NoCache=true};
+            using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var response=await http.SendAsync(req,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+            response.EnsureSuccessStatusCode();
+            if(response.Content.Headers.ContentLength>1024*1024)
+                throw new InvalidDataException("Breach API response exceeds maximum length");
+            await response.Content.LoadIntoBufferAsync(1024*1024,timeout.Token);
+            var body=await response.Content.ReadAsStringAsync(timeout.Token);
+            var count=PasswordBreachRange.ParseCount(suffix,body);
+            BreachResult.Text=count>0
+                ?$"This password appears {count:N0} times in the breach corpus. Change it wherever used."
+                :"No match returned by this service. This does not prove the password is strong or has never been exposed.";
+        }
+        catch(Exception ex)when(ex is HttpRequestException or TaskCanceledException or IOException or InvalidDataException)
+        {
+            BreachResult.Text="Breach check could not be verified. No risk conclusion is available; try again when the service is reachable.";
+        }
     }
     private void ArchiveClick(object sender,RoutedEventArgs e)
     {
