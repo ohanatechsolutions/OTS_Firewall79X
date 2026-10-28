@@ -160,6 +160,7 @@ Test("Section D miner alerts require CPU persistence plus corroboration",()=>{
     Assert(!EndpointSignals.MiningIndicator("chrome.exe",20,false));
     Assert(!EndpointSignals.MiningIndicator("xmrig.exe",1,true));
     Assert(EndpointSignals.MiningIndicator("xmrig.exe",3,false));
+    Assert(EndpointSignals.MiningIndicator("xmrig",3,false));
     Assert(EndpointSignals.MiningIndicator("ordinary.exe",4,true));
     Assert(!EndpointSignals.MiningIndicator("ordinary.exe",3,true));
     Assert(EndpointSignals.PoolPortSeen(42,[new Connection(42,"example","[::]:1","[8.8.8.8]:3333","Established")]));
