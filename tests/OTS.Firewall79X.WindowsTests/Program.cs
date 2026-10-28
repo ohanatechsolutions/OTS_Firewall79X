@@ -47,6 +47,10 @@ try
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");
     var policy=new TemporaryFirewallGuard(new EventStore(Path.Combine(Path.GetTempPath(),"ots-network-guard-ci-"+Guid.NewGuid().ToString("N"))));
     policy.Start();
+    if(policy.BlockObservedIntelligence("127.0.0.1",DateTimeOffset.UtcNow) ||
+       policy.BlockObservedIntelligence("192.0.2.10",DateTimeOffset.UtcNow) ||
+       policy.BlockObservedIntelligence("::ffff:8.8.8.8",DateTimeOffset.UtcNow))
+       throw new Exception("Invalid intelligence destination passed allowlist");
     if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
     if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
     policy.Dispose();
