@@ -28,8 +28,9 @@ public static class EndpointSignals
     {
         if(highCpuStreak<3)return false;
         string name=Path.GetFileName(process??"").ToLowerInvariant();
-        return name is "xmrig.exe" or "minerd.exe" or "cpuminer.exe" or "ethminer.exe"
-            || (poolPortSeen && highCpuStreak>=4);
+        return name is "xmrig.exe" or "xmrig" or "minerd.exe" or "minerd" or
+            "cpuminer.exe" or "cpuminer" or "ethminer.exe" or "ethminer" ||
+            (poolPortSeen && highCpuStreak>=4);
     }
     public static bool PoolPortSeen(int pid,IEnumerable<Connection> conns)=>
         conns.Any(c=>c.Pid==pid&&c.State=="Established"&&new[]{3333,4444,5555,7777,14444}
