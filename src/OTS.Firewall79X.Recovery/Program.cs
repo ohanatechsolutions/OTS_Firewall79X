@@ -22,6 +22,8 @@ public static class Program
                     using(var service=new ServiceController("OTSFirewall79X"))
                     {try{if(service.Status!=ServiceControllerStatus.Stopped){service.Stop();service.WaitForStatus(ServiceControllerStatus.Stopped,TimeSpan.FromSeconds(30));}}catch(InvalidOperationException ex)when(ex.InnerException is System.ComponentModel.Win32Exception w&&w.NativeErrorCode==1060){}}
                     Paths.SecureDirectory(Paths.Root);var journal=new ChangeJournal(Paths.At("changes.json"),new WindowsSettings());var conflicts=journal.Restore();
+                    // Offline recovery must also remove OTS-owned domain entries after a crash.
+                    new DomainHostsProtection(null).Restore();
                     AtomicFile.Write(Paths.At("state.json"),"{\"Enabled\":false,\"ResumeAt\":null}");response=new(true,$"Offline restore completed; {conflicts.Count} external changes preserved");
                 }
                 if(command=="uninstall"){using var service=new ServiceController("OTSFirewall79X");if(service.Status!=ServiceControllerStatus.Stopped){service.Stop();service.WaitForStatus(ServiceControllerStatus.Stopped,TimeSpan.FromSeconds(30));}}
