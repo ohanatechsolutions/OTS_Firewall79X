@@ -4,17 +4,47 @@ namespace OTS.Firewall79X.Windows;
 
 public sealed class WindowsSettings : ISettingStore
 {
+    // Explicit allowlist. Journal keys must never become arbitrary registry writes.
     public const string AutoRun="machine.autorun.disabled";
+    public const string NoAutorun="machine.autorun.command.disabled";
+    public const string NoAutoplayNonVolume="machine.autoplay.nonvolume.disabled";
+    public const string SmartScreen="machine.smartscreen.shell.enabled";
+    public static readonly IReadOnlySet<string> SafeHardeningKeys =
+        new HashSet<string>(StringComparer.Ordinal){AutoRun,NoAutorun,NoAutoplayNonVolume,SmartScreen};
+    private const string Explorer=@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+    private const string Shell=@"SOFTWARE\Policies\Microsoft\Windows\System";
+    private static (string Path,string Name) Location(string key)=>key switch
+    {
+        AutoRun=>(Explorer,"NoDriveTypeAutoRun"),
+        NoAutorun=>(Explorer,"NoAutorun"),
+        NoAutoplayNonVolume=>(Explorer,"NoAutoplayfornonVolume"),
+        SmartScreen=>(Shell,"EnableSmartScreen"),
+        _=>throw new ArgumentException("Setting is not in the allowlist",nameof(key))
+    };
     public string? Read(string key)
     {
-        if(key==AutoRun){using var r=Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer");return r?.GetValue("NoDriveTypeAutoRun")?.ToString();}
-        throw new ArgumentException("Setting is not in the allowlist");
+        var (path,name)=Location(key);
+        using var registry=Registry.LocalMachine.OpenSubKey(path);
+        if(registry?.GetValue(name)==null)return null;
+        if(registry.GetValueKind(name)!=RegistryValueKind.DWord)
+            return "non-DWORD:"+registry.GetValueKind(name); // observed external type: preserve on OFF
+        return ((int)registry.GetValue(name)!).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
     public void Write(string key,string? value)
     {
-        if(key!=AutoRun)throw new ArgumentException("Setting is not in the allowlist");
-        using var r=Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer");
-        if(value==null)r.DeleteValue("NoDriveTypeAutoRun",false);else r.SetValue("NoDriveTypeAutoRun",int.Parse(value),RegistryValueKind.DWord);
+        var (path,name)=Location(key);
+        int? number=value==null?null:int.TryParse(value,System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture,out var n)?n:null;
+        // Restore must accept the exact DWORD that existed before OTS changed it.
+        // Enforcement values are constrained at the only journal.Apply call sites.
+        if(value!=null&&number==null)
+            throw new ArgumentException("Invalid DWORD journal value",nameof(value));
+        using var registry=Registry.LocalMachine.CreateSubKey(path,true)
+            ??throw new UnauthorizedAccessException("Hardening registry location unavailable");
+        if(registry.GetValue(name)!=null&&registry.GetValueKind(name)!=RegistryValueKind.DWord)
+            throw new InvalidDataException("Refusing to overwrite a non-DWORD policy");
+        if(number==null)registry.DeleteValue(name,false);
+        else registry.SetValue(name,number.Value,RegistryValueKind.DWord);
     }
 }
 public sealed class FirewallAudit

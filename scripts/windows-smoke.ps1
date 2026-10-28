@@ -37,6 +37,10 @@ function AssertFirewallUnchanged([string]$Stage) {
 }
 $policyPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
 $oldAutorun = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
+$oldNoAutorun = (Get-ItemProperty $policyPath -Name NoAutorun -ErrorAction SilentlyContinue).NoAutorun
+$oldNonVolume = (Get-ItemProperty $policyPath -Name NoAutoplayfornonVolume -ErrorAction SilentlyContinue).NoAutoplayfornonVolume
+$smartScreenPolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+$oldSmartScreen = (Get-ItemProperty $smartScreenPolicyPath -Name EnableSmartScreen -ErrorAction SilentlyContinue).EnableSmartScreen
 $before = FirewallSnapshot baseline
 $setup = (Resolve-Path artifacts/release/OTS-Firewall79X-Setup.exe).Path
 $root = "$env:ProgramFiles\OTS Firewall79X"
@@ -65,7 +69,18 @@ $null=FirewallSnapshot after-user-profile
 Check 'Catalog and transaction self-check' { RunExe $helper '--selftest --quiet' }
 Check 'Pause and resume commands' { RunExe $helper '--pause --quiet';RunExe $helper '--on --quiet' }
 Check 'Off and recovery' { RunExe $helper '--off --quiet';RunExe $helper '--restore --quiet' }
-Check 'Restoration preserves original AutoRun policy' { $current = (Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun -ErrorAction SilentlyContinue).NoDriveTypeAutoRun;if($current -ne $oldAutorun){throw 'Original AutoRun policy not restored'} }
+Check 'Restoration preserves original AutoRun, AutoPlay and SmartScreen policies' {
+  foreach ($pair in @(
+    @($policyPath,'NoDriveTypeAutoRun',$oldAutorun),
+    @($policyPath,'NoAutorun',$oldNoAutorun),
+    @($policyPath,'NoAutoplayfornonVolume',$oldNonVolume),
+    @($smartScreenPolicyPath,'EnableSmartScreen',$oldSmartScreen)
+  )) {
+    $props=Get-ItemProperty -Path $pair[0] -Name $pair[1] -ErrorAction SilentlyContinue
+    $current=if($null -ne $props){$props.PSObject.Properties[$pair[1]].Value}else{$null}
+    if($current -ne $pair[2]){throw "Original $($pair[1]) policy was not restored"}
+  }
+}
 Check 'Later independent changes are preserved on OFF' {
   RunExe $helper '--on --quiet'
   Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value 128 -Type DWord

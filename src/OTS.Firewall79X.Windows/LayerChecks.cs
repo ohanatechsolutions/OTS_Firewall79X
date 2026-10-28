@@ -162,9 +162,14 @@ public sealed class LayerChecks
             case 18:
                 var dhcp=SystemQueries.Wmi("root\\cimv2","SELECT DHCPServer,DefaultIPGateway,Description FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=True","DHCPServer","DefaultIPGateway","Description");Changed(id,"DHCP and gateway configuration",dhcp);
                 return Good(id,$"Monitoring DHCP/gateway configuration for {dhcp.Count} adapters",LayerMode.Monitoring,"Detects configuration changes, not unaccepted rogue DHCP offers or Wi-Fi evil twins.");
-            case 19:case 49:
+            case 19:
                 if(NetworkError!=null)return Missing(id,NetworkError);var listeners=Connections.Where(c=>c.State=="Listening").Select(c=>$"{c.Process}:{c.Local}").Order().ToArray();Changed(19,"Listening TCP services",listeners);
                 return Good(id,$"{listeners.Length} local TCP listeners",LayerMode.Monitoring,"Local observation only; public reachability, NAT, router policy, and UDP exposure are not externally verified.");
+            case 49:
+                if(NetworkError!=null)return Missing(id,"Local listener inventory unavailable; external verification has not been performed: "+NetworkError);
+                var bound=Connections.Where(c=>c.State=="Listening").Select(c=>c.Local).ToArray();
+                return new(id,LayerMode.Auditing,false,SectionFAudits.Exposure(bound),
+                    "OPTIONAL EXTERNAL VERIFICATION UNAVAILABLE: no user-authorized remote probe or authenticated third-party exposure assessment is configured. Local binding is not Internet reachability.");
             case 21:
                 var wifi=WirelessAudit.Read();if(wifi.Count==0)return Na(id,"No connected WLAN interface reported");
                 foreach(var w in wifi){Changed(18,"Connected Wi-Fi BSSID/authentication: "+w.Ssid,new{w.Bssid,w.Authentication,w.Cipher});if(w.Weak)events.Add(21,"High","Weak Wi-Fi security",$"{w.Ssid}: authentication {w.Authentication}, cipher {w.Cipher}");}
@@ -331,23 +336,50 @@ public sealed class LayerChecks
                 return Good(id,$"Verified logon/failed-logon audit policy and Security event subscription; {Sensors.ObservedLoginSecurityEvents} account access/privilege events observed",
                     LayerMode.Monitoring,"Classifies interactive, network, unlock, remote interactive and cached logons; watches explicit credentials, privileged logons, account changes, and token elevation when process creation is audited. Security event logging and provider configuration determine coverage.");
             case 46:
-                var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender","SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus","AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
+                var defender=SystemQueries.Wmi("root\\Microsoft\\Windows\\Defender",
+                    "SELECT AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated FROM MSFT_MpComputerStatus",
+                    "AntivirusEnabled","RealTimeProtectionEnabled","AntivirusSignatureLastUpdated").FirstOrDefault();
                 var hardening=HostHardeningAudit.Read();var hardware=DeviceStatus();
-                if(defender==null)return Missing(id,"Microsoft Defender status is unavailable; "+hardening.Summary+"; "+hardware.Evidence);
-                bool active=defender["AntivirusEnabled"]=="True"&&defender["RealTimeProtectionEnabled"]=="True";
-                return active?Good(id,"Defender real-time protection enabled; "+hardening.Summary+"; "+hardware.Evidence,LayerMode.Auditing,"OS encryption and TPM observations are provider-dependent. Full ASLR, key recovery policy, security patching and boot attestation remain unverified."):Bad(id,"Defender real-time protection is not confirmed; "+hardening.Summary+"; "+hardware.Evidence,"May reflect a different antivirus product. No Windows security settings are changed.");
-            case 47:return SystemQueries.Reg(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer","NoDriveTypeAutoRun") is int autorun&&autorun==255?Good(id,"AutoRun disabled for drive types; journaled restoration available",LayerMode.Enforcing,"Narrow hardening scope; legacy protocols and other policies are not automatically changed."):Bad(id,"AutoRun hardening is not applied or was changed externally");
+                var additional=SectionFAudits.HostEvidence();
+                var defenderStatus=defender==null?"Defender provider unavailable (other AV may be in use)":
+                    $"Defender real-time={defender["RealTimeProtectionEnabled"]}, enabled={defender["AntivirusEnabled"]}";
+                var hostSummary=defenderStatus+"; "+hardening.Summary+"; "+additional+"; "+hardware.Evidence;
+                if(defender==null)return Missing(id,hostSummary+"; endpoint antivirus state unknown");
+                var weak=defender["AntivirusEnabled"]!="True"||defender["RealTimeProtectionEnabled"]!="True"||
+                    !hardening.UacEnabled||!hardening.DepEnabled||hardening.LsaProtected==false||
+                    hardening.Smb1Disabled==false||hardware.TpmEnabled==false||hardware.OsVolumeProtected==false;
+                return new(id,LayerMode.Auditing,false,hostSummary,
+                    (weak?"One or more checks are weak/unknown; also: ":"Observed controls do not complete the full specification; ")+
+                    "Machine-wide ASLR, effective account/domain policy, real current-user lock screen, insecure ACLs, encryption recovery and TPM/firmware attestation are not validated. A separate AV product may replace Defender.");
+            case 47:
+                var policyPath=@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+                var autoRun=SystemQueries.Reg(policyPath,"NoDriveTypeAutoRun") is int a&&a==255;
+                var autoCommand=SystemQueries.Reg(policyPath,"NoAutorun") is int b&&b==1;
+                var nonVolume=SystemQueries.Reg(policyPath,"NoAutoplayfornonVolume") is int c&&c==1;
+                var smartScreenPolicy=SystemQueries.Reg(@"SOFTWARE\Policies\Microsoft\Windows\System","EnableSmartScreen") is int ss&&ss==1;
+                var state=$"NoDriveTypeAutoRun={autoRun}; NoAutorun={autoCommand}; NoAutoplayfornonVolume={nonVolume}; Shell SmartScreen policy={smartScreenPolicy}";
+                return autoRun&&autoCommand&&nonVolume&&smartScreenPolicy
+                    ?Good(id,state+"; four allowable DWORD policies configured; only actual OTS changes were journaled for rollback",LayerMode.Enforcing,
+                        "Values may be enforced by Group Policy; scope is limited to AutoRun/AutoPlay and SmartScreen policy; actual SmartScreen reputation provider operation is not independently attested. No legacy protocol is automatically disabled without a dedicated compatibility/rollback design.")
+                    :Bad(id,state+"; one or more journaled hardening settings missing or externally changed",
+                        "Every OTS-owned mutation uses durable prepare/apply/compare-before-restore. Other security policies remain untouched.");
             case 48:return Missing(id,"Browser audit requires the interactive-user collector");
             case 50:return new(id,LayerMode.Idle,false,"Select a folder in the desktop interface to scan for likely secrets","Reads only the selected tree within budgets; reports secret type and file location, never matched plaintext.");
             case 51:
                 var rdp=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Terminal Server","fDenyTSConnections");var assist=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Remote Assistance","fAllowToGetHelp");
-                var remoteSummary=$"RDP deny-connections={rdp??"unknown"}; Remote Assistance={assist??"unknown"}";
+                var remoteSummary=$"RDP deny-connections={rdp??"unknown"}; Remote Assistance={assist??"unknown"}; "+
+                    SectionFAudits.RemoteHardware(Connections.Where(c=>c.State=="Listening").Select(c=>c.Local));
                 if(rdp is int rdpValue && rdpValue==0 || assist is int assistValue && assistValue==1)
-                    return Bad(id,remoteSummary+"; remote access is permitted by at least one policy","A permitted remote feature is not proof the host is externally reachable. No policy is changed.");
-                return Good(id,remoteSummary,LayerMode.Auditing,"Unspecified policies are not proof of protection. Intel AMT, DMA protections, Wake-on-LAN and firmware policy are not fully assessed.");
+                    return Bad(id,remoteSummary+"; a remote access capability is permitted","Firewall and router reachability, firmware Intel AMT provisioning, device wake, and hardware DMA status require validation; no policy is changed.");
+                return new(id,LayerMode.Auditing,false,remoteSummary,
+                    "Partial read-only audit. Unknown RDP/Remote Assistance, firmware Intel AMT and DMA indicators prevent certification.");
             case 52:
                 var fixes=SystemQueries.Wmi("root\\cimv2","SELECT HotFixID,InstalledOn FROM Win32_QuickFixEngineering","HotFixID","InstalledOn");Changed(id,"Installed Windows hotfixes",fixes);
-                return Good(id,$"{fixes.Count} installed Windows hotfix records",LayerMode.Auditing,"Inventory only. Missing-update search and software CVE matching are incomplete; this does not prove the host is patched.");
+                var pending=WindowsMissingUpdateAudit.Latest(out var updateState);
+                if(pending==null)return Missing(id,$"{fixes.Count} historical installed hotfix records; "+updateState);
+                if(!pending.Verified)return Missing(id,$"{fixes.Count} historical hotfix records; "+updateState);
+                return new(id,LayerMode.Auditing,false,$"{fixes.Count} historical installed hotfixes; "+updateState,
+                    "Pending count is a completed native Windows Update Agent search, not proof the system is secure. Missing updates may include non-security items. Third-party package CVE matching has no verified vendor/version-to-advisory correlation configured.");
             case 73:return firewall!=null?Good(id,FirewallAudit.Analyze(firewall.Value.Rules),LayerMode.Auditing,"Exact-match analysis only; full WFP/IPsec/GPO precedence and range shadowing are not modeled."):Missing(id,"Firewall rule enumeration unavailable");
             case 75:
                 if(DomainFeed?.Active is not { } domains)return Missing(id,DomainFeed?.Status??"No validated domain intelligence available");
