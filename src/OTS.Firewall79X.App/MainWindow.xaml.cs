@@ -46,7 +46,7 @@ public partial class MainWindow : Window
             if(!dashboard.Enabled&&userMonitor!=null){userMonitor.Dispose();userMonitor=null;}
             if(userMonitor!=null)
             {
-                var overlay=userMonitor.Results().ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>
+                var overlay=userMonitor.Results().Where(l=>l.Id is 28 or 32 or 46 or 48).ToDictionary(l=>l.Id);var layers=dashboard.Layers.Select(l=>
                 {
                     if(!overlay.TryGetValue(l.Id,out var user))return l;
                     if(l.Id!=46)return user;
@@ -108,6 +108,12 @@ public partial class MainWindow : Window
     private async void PauseClick(object sender,RoutedEventArgs e)=>await Command("pause");
     private async void RestoreClick(object sender,RoutedEventArgs e)=>await Command("restore");
     private async void SelfTestClick(object sender,RoutedEventArgs e)=>await Command("selftest");
+    private async void DomainsOnClick(object sender,RoutedEventArgs e)
+    {
+        var confirmed=MessageBox.Show("Enable Windows hosts-file blocking for up to 1,000 exact hostnames from an unsigned public threat-feed mirror?\n\nThis is optional and can block legitimate sites. DNS-over-HTTPS may bypass it. OTS will restore its managed entries when protection stops, on reboot, or if the feed expires. Continue?","Confirm optional domain blocking",MessageBoxButton.YesNo,MessageBoxImage.Warning);
+        if(confirmed==MessageBoxResult.Yes)await Command("domains-on");
+    }
+    private async void DomainsOffClick(object sender,RoutedEventArgs e)=>await Command("domains-off");
     private async void RefreshClick(object sender,RoutedEventArgs e)=>await Refresh();
     private void LayerSearchChanged(object sender,TextChangedEventArgs e){if(ready){Filter();if(LayerSearch.Text.Length>0)MainTabs.SelectedIndex=1;}}
     private void Filter(){var q=LayerSearch.Text.Trim();LayerGrid.ItemsSource=rows.Where(r=>$"{r.Id} {r.Name} {r.Category} {r.Evidence}".Contains(q,StringComparison.OrdinalIgnoreCase)).ToArray();}

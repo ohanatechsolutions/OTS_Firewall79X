@@ -89,6 +89,16 @@ public static class SectionFAudits
         }
         catch(Exception ex)when(ex is System.Management.ManagementException or UnauthorizedAccessException or COMException or System.Security.SecurityException)
         {findings.Add("VBS/Device Guard provider unavailable: "+ex.GetType().Name);}
+        // Read a small, explicitly defined set of security-sensitive DACLs.
+        // A broad ACE is only a review indicator; it is not an effective-access computation.
+        foreach(var target in new[]{
+            (Label:"OTS program directory",Path:AppContext.BaseDirectory),
+            (Label:"Windows hosts file",Path:Path.Combine(Environment.SystemDirectory,"drivers","etc","hosts"))
+        })
+        {
+            var acl=SectionFPermissionsAudit.Read(target.Label,target.Path);
+            findings.Add(target.Label+" DACL: "+acl.Evidence);
+        }
         // Windows service is not the interactive user: do not claim a user screen lock is verified.
         return string.Join("; ",findings);
     }

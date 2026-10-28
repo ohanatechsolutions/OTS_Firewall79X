@@ -9,7 +9,8 @@ public sealed class Engine : IDisposable
 {
     private sealed record Persisted(bool Enabled,DateTimeOffset? ResumeAt);
     private readonly object gate=new();private readonly EventStore events;private readonly ChangeJournal journal;private readonly WindowsSettings settings=new();private readonly LayerChecks checks;
-    private EventSensors? sensors;private TemporaryFirewallGuard? networkGuard;private DeceptionMonitor? deception;private readonly FeodoThreatFeed feed=new();private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
+    private EventSensors? sensors;private TemporaryFirewallGuard? networkGuard;private DeceptionMonitor? deception;private AdditionalHostMonitor? hostMonitor;private readonly FeodoThreatFeed feed=new();
+    private readonly MaliciousDomainFeed domainFeed=new();private readonly DomainHostsProtection domainHosts;private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
     private ResourceBudget.Decision governor=ResourceBudget.Evaluate(false,0,0,long.MaxValue,0);
@@ -19,7 +20,8 @@ public sealed class Engine : IDisposable
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));
-        journal=new(Paths.At("changes.json"),settings);checks=new(events){ThreatFeed=feed};
+        journal=new(Paths.At("changes.json"),settings);domainHosts=new(events);checks=new(events){ThreatFeed=feed,DomainFeed=domainFeed,DomainBlocks=domainHosts};
+        try{domainHosts.Restore();}catch(Exception ex){events.Add(75,"Warning","Domain recovery requires attention",ex.Message);}
         cached=new(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,IdleResults(),[],[],0,0,0,null,"No validated intelligence feeds configured");
         // Recover durable intent first; never reapply a stale transaction over newer system settings.
         var conflicts=journal.Restore();if(conflicts.Count>0)events.Add(59,"Warning","Recovery preserved external changes",string.Join(", ",conflicts));
@@ -46,6 +48,10 @@ public sealed class Engine : IDisposable
                     case "restore":Disable(null);return new(true,"Restoration completed; external changes were preserved");
                     case "report":return new(true,Reports.Generate(cached));
                     case "selftest":return new(Catalog.All.Count==79&&journal.Entries.All(e=>WindowsSettings.SafeHardeningKeys.Contains(e.Key)),"Catalog and journal schema verified; this is not a full protection regression test");
+                    case "domains-on":
+                        if(!enabled)return new(false,"Turn on OTS monitoring before enabling optional domain blocking");
+                        domainHosts.Enable(domainFeed.Active);return new(true,domainHosts.Status);
+                    case "domains-off":domainHosts.Restore();return new(true,"Optional domain blocking removed; other hosts entries preserved");
                     default:return new(false,"Unsupported command");
                 }
             }
@@ -55,19 +61,21 @@ public sealed class Engine : IDisposable
     private void Enable()
     {
         if(enabled)return;
-        AtomicFile.Write(Paths.At("pre-activation.json"),JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,AutoRun=settings.Read(WindowsSettings.AutoRun),NoAutorun=settings.Read(WindowsSettings.NoAutorun),NonVolumeAutoPlay=settings.Read(WindowsSettings.NoAutoplayNonVolume)},Wire.Json));
+        AtomicFile.Write(Paths.At("pre-activation.json"),JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,AutoRun=settings.Read(WindowsSettings.AutoRun),NoAutorun=settings.Read(WindowsSettings.NoAutorun),NonVolumeAutoPlay=settings.Read(WindowsSettings.NoAutoplayNonVolume),SmartScreen=settings.Read(WindowsSettings.SmartScreen)},Wire.Json));
         try
         {
-            journal.Apply(WindowsSettings.AutoRun,"255");journal.Apply(WindowsSettings.NoAutorun,"1");journal.Apply(WindowsSettings.NoAutoplayNonVolume,"1");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;deception=new(events);sensors=new(events,networkGuard){Deception=deception};sensors.Start();checks.Sensors=sensors;
+            journal.Apply(WindowsSettings.AutoRun,"255");journal.Apply(WindowsSettings.NoAutorun,"1");journal.Apply(WindowsSettings.NoAutoplayNonVolume,"1");journal.Apply(WindowsSettings.SmartScreen,"1");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;deception=new(events);sensors=new(events,networkGuard){Deception=deception,Domains=domainFeed};sensors.Start();checks.Sensors=sensors;
+            hostMonitor=new(events);checks.HostMonitor=hostMonitor;
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
-            events.Add(47,"Info","Protection activated","Three allowlisted AutoRun/AutoPlay settings journaled with rollback; existing firewall policy preserved");
+            events.Add(47,"Info","Protection activated","Four allowlisted AutoRun/AutoPlay and shell SmartScreen policies journaled; existing firewall policy preserved");
         }
-        catch{enabled=false;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;journal.Restore();throw;}
+        catch{enabled=false;hostMonitor?.Dispose();hostMonitor=null;checks.HostMonitor=null;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;journal.Restore();throw;}
     }
     private void Disable(DateTimeOffset? resume)
     {
-        enabled=false;epoch++;resumeAt=resume;Save();deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;
+        enabled=false;epoch++;resumeAt=resume;Save();hostMonitor?.Dispose();hostMonitor=null;checks.HostMonitor=null;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;
+        domainHosts.Restore();
         var conflicts=journal.Restore();if(conflicts.Count>0)events.Add(59,"Warning","External settings preserved",string.Join(", ",conflicts));
         cached=cached with{Enabled=false,Protection="Not Protected",Score=0,Confidence=0,Layers=IdleResults(),ResumeAt=resume,Time=DateTimeOffset.UtcNow};
         events.Add(59,"Info","Stack disabled","Existing Windows protection and unrelated settings preserved");
@@ -82,7 +90,17 @@ public sealed class Engine : IDisposable
             {
                 lock(gate){if(!enabled&&resumeAt!=null&&resumeAt<=DateTimeOffset.UtcNow)Enable();}
                 bool active;lock(gate)active=enabled;
-                if(active){await feed.RefreshIfDueAsync(ct);networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);}
+                if(active)
+                {
+                    await feed.RefreshIfDueAsync(ct);
+                    networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);
+                    await domainFeed.RefreshIfDueAsync(ct);
+                    if(domainHosts.Applied && domainFeed.Active==null)
+                    {
+                        lock(gate)domainHosts.Restore();
+                        events.Add(75,"Warning","Expired domain protection removed","Domain feed unavailable or stale; managed hosts entries removed");
+                    }
+                }
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
                 // Resource governor uses measured service pressure and real free disk space.
                 long free=long.MaxValue,capacity=0;
@@ -127,7 +145,7 @@ public sealed class Engine : IDisposable
             using var process=Process.GetCurrentProcess();var now=DateTimeOffset.UtcNow;double cpu=(process.TotalProcessorTime-lastCpu).TotalSeconds/Math.Max((now-lastCpuAt).TotalSeconds,1)/Environment.ProcessorCount*100;lastCpu=process.TotalProcessorTime;lastCpuAt=now;
             var score=Posture.Calculate(results,true);
             lock(gate){if(!enabled||epoch!=version)return;
-            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary);
+            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary+" | "+domainFeed.Status);
             if(!governor.DeferNonessentialDiskWork&&events.ConsumeSnapshotRequest())
             {
                 var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
@@ -204,5 +222,7 @@ public sealed class Engine : IDisposable
             default:return null;
         }
     }
-    public void Dispose(){deception?.Dispose();sensors?.Dispose();networkGuard?.Dispose();feed.Dispose();}
+    public void Dispose(){hostMonitor?.Dispose();deception?.Dispose();sensors?.Dispose();networkGuard?.Dispose();
+        try{if(domainHosts.Applied)domainHosts.Restore();}catch(Exception ex){events.Add(75,"Warning","Domain restore failed on shutdown",ex.Message);}
+        domainFeed.Dispose();feed.Dispose();}
 }

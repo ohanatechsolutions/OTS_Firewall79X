@@ -23,10 +23,34 @@ try
     if(args.Contains("--unprivileged"))
     {
         if(admin)throw new Exception("This probe must use a nonadministrator token");
-        foreach(var command in new[]{"on","off","pause","restore","report","selftest"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        foreach(var command in new[]{"on","off","pause","restore","report","selftest","domains-on","domains-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
         return 0;
     }
     if(!admin)throw new Exception("Administrative integration probe expected");
+    // Real Win32 File.Replace test on an isolated fixture, never on the live Windows hosts file.
+    var testRoot=Path.Combine(Path.GetTempPath(),"OTS-domain-test-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        var hostFile=Path.Combine(testRoot,"hosts");
+        var original="# unrelated admin-managed mapping\n10.0.0.2 internal.corp\n";
+        File.WriteAllText(hostFile,original);
+        var names=Enumerable.Range(0,12).Select(i=>$"malware-{i}.example.net").ToHashSet();
+        var feed=new MaliciousDomainIntelligence.Snapshot(DateTimeOffset.UtcNow,names,0);
+        var blocks=new DomainHostsProtection(null,hostFile);
+        blocks.Enable(feed);
+        if(!blocks.Applied || !File.ReadAllText(hostFile).Contains("0.0.0.0 malware-0.example.net"))
+            throw new Exception("Domain fixture did not install exact hostname blocks");
+        File.AppendAllText(hostFile,"# externally added comment\n");
+        blocks.Restore();
+        if(blocks.Applied || File.ReadAllText(hostFile)!=original+"# externally added comment\n")
+            throw new Exception("Domain rollback failed to preserve external fixture changes");
+        blocks.Restore(); // idempotence
+    }
+    finally { Directory.Delete(testRoot,true); }
+
+
+
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
     var started=DateTimeOffset.UtcNow;
     while(status.Dashboard.Time<started.AddSeconds(-5)||!status.Dashboard.Layers.Any(l=>l.CheckedAt!=null))
@@ -39,9 +63,10 @@ try
     var applied=new WindowsSettings().Read(WindowsSettings.AutoRun);if(applied!="255")throw new Exception("Journaled hardening was not applied");
     var windowsSettings=new WindowsSettings();
     if(windowsSettings.Read(WindowsSettings.NoAutorun)!="1"||
-       windowsSettings.Read(WindowsSettings.NoAutoplayNonVolume)!="1")
+       windowsSettings.Read(WindowsSettings.NoAutoplayNonVolume)!="1"||
+       windowsSettings.Read(WindowsSettings.SmartScreen)!="1")
         throw new Exception("Extended hardening registry policy was not applied");
-    if(WindowsSettings.SafeHardeningKeys.Count!=3)
+    if(WindowsSettings.SafeHardeningKeys.Count!=4)
         throw new Exception("Unexpected hardening allowlist mutation");
     if(!SectionFAudits.IsManagementPort("[::]:5985")||
        SectionFAudits.IsManagementPort("[::1]:443")||
@@ -57,6 +82,16 @@ try
     var update=WindowsMissingUpdateAudit.Latest(out var updateState);
     if(string.IsNullOrWhiteSpace(updateState))
         throw new Exception("Missing-update audit does not expose provider status");
+    var everyone=new System.Security.AccessControl.RawSecurityDescriptor("D:(A;;FA;;;WD)");
+    var administrators=new System.Security.AccessControl.RawSecurityDescriptor("D:(A;;FA;;;BA)");
+    var readOnly=new System.Security.AccessControl.RawSecurityDescriptor("D:(A;;FR;;;WD)");
+    if(!SectionFPermissionsAudit.HasPotentialBroadWriteAce(everyone) ||
+       SectionFPermissionsAudit.HasPotentialBroadWriteAce(administrators) ||
+       SectionFPermissionsAudit.HasPotentialBroadWriteAce(readOnly))
+        throw new Exception("Potential insecure file ACL heuristic failed deterministic fixtures");
+    var aclEvidence=SectionFPermissionsAudit.Read("program",AppContext.BaseDirectory);
+    if(string.IsNullOrEmpty(aclEvidence.Evidence))
+        throw new Exception("Sensitive ACL audit returned no explicit evidence");
     var audit=HostHardeningAudit.Read();
     if(!audit.Summary.Contains("UAC=")||!audit.Summary.Contains("DEP=")||!audit.Summary.Contains("SMBv1"))throw new Exception("Hardening audit evidence missing");
     var integrity=status.Dashboard.Layers.Single(l=>l.Id==61);
