@@ -27,10 +27,37 @@ try
     if(args.Contains("--unprivileged"))
     {
         if(admin)throw new Exception("This probe must use a nonadministrator token");
-        foreach(var command in new[]{"on","off","pause","restore","report","selftest","authguard-on","authguard-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        foreach(var command in new[]{"on","off","pause","restore","report","selftest","domains-on","domains-off","authguard-on","authguard-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        var protectedKey=Path.Combine(Paths.Root,"logs","integrity.dpapi");
+        try{_ = File.ReadAllBytes(protectedKey);throw new Exception("Unprivileged user read the protected integrity key");}
+        catch(UnauthorizedAccessException) { /* expected least-privilege boundary */ }
         return 0;
     }
     if(!admin)throw new Exception("Administrative integration probe expected");
+    // Real Win32 File.Replace test on an isolated fixture, never on the live Windows hosts file.
+    var testRoot=Path.Combine(Path.GetTempPath(),"OTS-domain-test-"+Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(testRoot);
+    try
+    {
+        var hostFile=Path.Combine(testRoot,"hosts");
+        var original="# unrelated admin-managed mapping\n10.0.0.2 internal.corp\n";
+        File.WriteAllText(hostFile,original);
+        var names=Enumerable.Range(0,12).Select(i=>$"malware-{i}.example.net").ToHashSet();
+        var feed=new MaliciousDomainIntelligence.Snapshot(DateTimeOffset.UtcNow,names,0);
+        var blocks=new DomainHostsProtection(null,hostFile);
+        blocks.Enable(feed);
+        if(!blocks.Applied || !File.ReadAllText(hostFile).Contains("0.0.0.0 malware-0.example.net"))
+            throw new Exception("Domain fixture did not install exact hostname blocks");
+        File.AppendAllText(hostFile,"# externally added comment\n");
+        blocks.Restore();
+        if(blocks.Applied || File.ReadAllText(hostFile)!=original+"# externally added comment\n")
+            throw new Exception("Domain rollback failed to preserve external fixture changes");
+        blocks.Restore(); // idempotence
+    }
+    finally { Directory.Delete(testRoot,true); }
+
+
+
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
     if(status.Dashboard.AuthenticationProtectionEnabled)
         throw new Exception("Optional authentication blocking must always default off on service restart");
@@ -69,6 +96,40 @@ try
     if(!policy.Operational)throw new Exception("Windows Firewall source rule manager startup check failed: "+policy.Health);
     if(policy.ActiveRules!=0)throw new Exception("Unexpected temporary restrictions on fresh startup");
     policy.Dispose();
+    if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")=="true")
+    {
+        // Integration regression: an attacker or external administrator may create a
+        // reserved-name rule. A prefix is not sufficient authority to delete it.
+        dynamic firewall=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        var spoofName=OwnedFirewallRule.InboundPrefix+"9.9.9.9";
+        dynamic spoof=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
+        try
+        {
+            spoof.Name=spoofName;
+            spoof.Description="External rule: never delete solely by reserved name";
+            spoof.Direction=1;spoof.Action=0;spoof.Protocol=256;
+            spoof.RemoteAddresses="9.9.9.9";spoof.Profiles=int.MaxValue;spoof.Enabled=true;
+            firewall.Rules.Add(spoof);
+            using(var guarded=new TemporaryFirewallGuard(new EventStore(
+                Path.Combine(Path.GetTempPath(),"ots-rule-preservation-ci-"+Guid.NewGuid().ToString("N")))))
+            {
+                guarded.Start();
+                if(!guarded.Operational)throw new Exception("Guard failed to initialize");
+            }
+            dynamic? stillPresent=firewall.Rules.Item(spoofName);
+            if(stillPresent==null)throw new Exception("Modified reserved-name rule was deleted by cleanup");
+            System.Runtime.InteropServices.Marshal.ReleaseComObject(stillPresent);
+        }
+        finally
+        {
+            try{firewall.Rules.Remove(spoofName);}
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(spoof);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(firewall);
+            }
+        }
+    }
     var udp=NetworkTables.UdpSockets();if(udp.Any(c=>c.State!="UDP Bound"))throw new Exception("Non-UDP entry in UDP table");
     var conns=NetworkTables.Connections();if(conns.Count==0)throw new Exception("TCP table unexpectedly empty on CI host");
     using(var pipe=new NamedPipeClientStream(".",Ipc.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous))
@@ -80,6 +141,84 @@ try
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(10));await pipe.ConnectAsync(timeout.Token);await pipe.WriteAsync(BitConverter.GetBytes(int.MaxValue),timeout.Token);await pipe.FlushAsync(timeout.Token);var b=new byte[1];int count=await pipe.ReadAsync(b,timeout.Token);if(count!=0)throw new Exception("Malformed frame not rejected");
     }
     if(!(await Ipc.SendAsync("status")).Ok)throw new Exception("Service unhealthy after malformed message");
+    // Exercise the installed service, not a mocked canary listener. These tests
+    // run only inside the disposable Windows CI environment.
+    var canaryFolder=Paths.At("canaries");
+    var urlPath=Path.Combine(canaryFolder,"canary-url.txt");
+    var credentialsPath=Path.Combine(canaryFolder,"decoy-credentials.txt");
+    var dnsPath=Path.Combine(canaryFolder,"canary-dns.txt");
+    if(!File.Exists(urlPath)||!File.Exists(credentialsPath)||!File.Exists(dnsPath))
+        throw new Exception("Section B canary files were not deployed");
+    var canaryUrl=new Uri(File.ReadAllText(urlPath).Trim());
+    if(canaryUrl.Host!="127.0.0.1"||canaryUrl.Scheme!="http"
+        ||!canaryUrl.AbsolutePath.StartsWith("/canary/"))
+        throw new Exception("Local canary escaped the loopback security boundary");
+    using(var http=new HttpClient(new HttpClientHandler{UseProxy=false}){Timeout=TimeSpan.FromSeconds(5)})
+    {
+        var canaryResponse=await http.GetAsync(canaryUrl);
+        if(canaryResponse.StatusCode!=System.Net.HttpStatusCode.NoContent)
+            throw new Exception("Exact canary URL did not return 204");
+        var decoyResponse=await http.GetAsync(new Uri($"http://127.0.0.1:{canaryUrl.Port}/unrecognized-probe"));
+        if(decoyResponse.StatusCode!=System.Net.HttpStatusCode.NotFound)
+            throw new Exception("Decoy service did not return safe 404");
+    }
+    // A non-canary file in the same folder must not be treated as a honeytoken.
+    var beforeNegative=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+        e.Layer==11 && e.Kind=="Canary content tampered");
+    var unrelatedPath=Path.Combine(canaryFolder,"not-an-ots-decoy.txt");
+    try
+    {
+        File.WriteAllText(unrelatedPath,"unrelated test file");
+        await Task.Delay(400);
+        var afterNegative=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+            e.Layer==11 && e.Kind=="Canary content tampered");
+        if(afterNegative!=beforeNegative)
+            throw new Exception("Unrelated file produced a canary tamper false positive");
+    }
+    finally { File.Delete(unrelatedPath); }
+    // Use true Security 4663 telemetry for read attribution, not a synthetic
+    // event. Conditional because the service never changes machine audit policy.
+    var canaryStatus=(await Ipc.SendAsync("status")).Dashboard?.Layers.Single(x=>x.Id==11);
+    bool systemAuditEnabled=false;
+    try { systemAuditEnabled=AuditPolicy.Coverage(31).Enabled; }
+    catch { /* Unsupported/inaccessible audit-policy query is an unavailable capability. */ }
+    bool canaryReadAuditing=systemAuditEnabled
+        && canaryStatus?.Evidence.Contains("read-audit setup: Narrow canary-file SACL installed") == true;
+    if(canaryReadAuditing)
+    {
+        var prior=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+            e.Layer==11 && e.Kind=="Audited canary file read");
+        // Read in this separate Windows integration-test process so it cannot
+        // be mistaken for the service's own integrity-verifier reads.
+        _ = File.ReadAllText(credentialsPath);
+        bool readFound=false;
+        for(int attempt=0;attempt<15;attempt++)
+        {
+            await Task.Delay(400);
+            var observed=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+                e.Layer==11 && e.Kind=="Audited canary file read");
+            if(observed>prior){readFound=true;break;}
+        }
+        if(!readFound)
+            throw new Exception("Enabled canary audit policy/SACL failed to attribute a genuine file read");
+    }
+    var originalCanary=File.ReadAllText(credentialsPath);
+    try
+    {
+        File.AppendAllText(credentialsPath,"\nOTS-INTEGRATION-TAMPER");
+        await Task.Delay(1200);
+        var after=await Ipc.SendAsync("status");
+        var observed=after.Dashboard?.Events??[];
+        if(!observed.Any(e=>e.Layer==11&&e.Kind=="Canary content tampered")
+            || !observed.Any(e=>e.Layer==12&&e.Kind=="Local canary URL contacted")
+            || !observed.Any(e=>e.Layer==13&&e.Kind=="Decoy service connection"))
+            throw new Exception("Expected Section B tamper, URL and honeypot events not observed");
+    }
+    finally { File.WriteAllText(credentialsPath,originalCanary); }
+    var sections=(await Ipc.SendAsync("status")).Dashboard?.Layers;
+    if(sections is null||sections.Any(x=>x.Id is 11 or 12 or 13 && x.Mode==LayerMode.Enforcing))
+        throw new Exception("Deception layers falsely claimed network enforcement");
+
     return 0;
 }
 catch(Exception ex){Console.Error.WriteLine(ex);return 1;}

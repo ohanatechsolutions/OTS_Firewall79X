@@ -37,7 +37,7 @@ public static class TrustedArtifacts
         using (var signer = ECDsa.Create())
         {
             signer.ImportSubjectPublicKeyInfo(pinnedSubjectPublicKeyInfo, out int consumed);
-            if (consumed != pinnedSubjectPublicKeyInfo.Length || signer.KeySize < 256 ||
+            if (consumed != pinnedSubjectPublicKeyInfo.Length || signer.KeySize != 256 ||
                 !signer.VerifyData(payload, signature, HashAlgorithmName.SHA256))
                 throw new CryptographicException("Publisher signature verification failed");
         }
@@ -53,9 +53,13 @@ public static class TrustedArtifacts
             throw new InvalidDataException("Signed file inventory is missing or too large");
 
         var root = Path.GetFullPath(stagedDirectory);
-        if (!Directory.Exists(root) || (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidDataException("Invalid/reparse-point staging directory");
+        if (!Directory.Exists(root))
+            throw new InvalidDataException("Staging directory does not exist");
+        for (var ancestor = new DirectoryInfo(root); ancestor != null; ancestor = ancestor.Parent)
+            if ((ancestor.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Reparse point in signed staging path");
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long cumulativeBytes = 0;
         foreach (var entry in manifest.Files)
         {
             if (entry.Name is null || entry.Name.Length is < 1 or > 128 ||
@@ -65,6 +69,9 @@ public static class TrustedArtifacts
                 entry.Length is < 1 or > 256 * 1024 * 1024 ||
                 entry.Sha256 is null || entry.Sha256.Length != 64)
                 throw new InvalidDataException("Unsafe signed file inventory");
+            cumulativeBytes = checked(cumulativeBytes + entry.Length);
+            if (cumulativeBytes > 512L * 1024 * 1024)
+                throw new InvalidDataException("Signed package cumulative size budget exceeded");
             byte[] expected;
             try { expected = Convert.FromHexString(entry.Sha256); }
             catch (FormatException ex) { throw new InvalidDataException("Malformed signed digest", ex); }

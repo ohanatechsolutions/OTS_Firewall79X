@@ -89,6 +89,8 @@ public sealed class EventStore
         }
         catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
         {
+            // Do not present partially replayed or unauthenticated counters as verified.
+            Total=0;Blocked=0;VerifiedRetainedEvents=0;LegacyChainGaps=0;recent.Clear();
             LastError="Existing security log history failed integrity verification: "+Wire.Clean(ex.Message,256);
         }
     }
@@ -103,6 +105,22 @@ public sealed class EventStore
             var e=new SecurityEvent(now,layer,severity,kind,detail,blocked);
             if(severity=="High")Interlocked.Exchange(ref snapshotRequested,1);
             Total++;if(blocked)Blocked++;recent.Enqueue(e);while(recent.Count>300)recent.Dequeue();
+            // The protected service emits high-severity incidents even when no WPF session
+            // is open. This is independent of local JSON-log availability and may be
+            // consumed by Windows Event Viewer / enterprise event forwarding.
+            if(severity=="High")
+            {
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OTSFirewall79X",
+                        Wire.Clean($"Layer {layer}: {kind}; {detail}",1024),
+                        System.Diagnostics.EventLogEntryType.Warning,7900+Math.Clamp(layer,0,79));
+                }
+                catch(Exception)
+                {
+                    // Do not stop the protection engine when Windows Event Log is unavailable.
+                }
+            }
             // Never append to a history whose authentication or schema verification failed.
             // Preserve tampered evidence on disk for investigation; new events remain in RAM.
             if(LastError!=null)return;

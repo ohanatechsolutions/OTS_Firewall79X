@@ -9,7 +9,8 @@ public sealed class Engine : IDisposable
 {
     private sealed record Persisted(bool Enabled,DateTimeOffset? ResumeAt);
     private readonly object gate=new();private readonly EventStore events;private readonly ChangeJournal journal;private readonly WindowsSettings settings=new();private readonly LayerChecks checks;
-    private EventSensors? sensors;private TemporaryFirewallGuard? networkGuard;private DeceptionMonitor? deception;private readonly FeodoThreatFeed feed=new();private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
+    private EventSensors? sensors;private TemporaryFirewallGuard? networkGuard;private DeceptionMonitor? deception;private AdditionalHostMonitor? hostMonitor;private readonly FeodoThreatFeed feed=new();
+    private readonly MaliciousDomainFeed domainFeed=new();private readonly DomainHostsProtection domainHosts;private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
     private ResourceBudget.Decision governor=ResourceBudget.Evaluate(false,0,0,long.MaxValue,0);
@@ -19,7 +20,8 @@ public sealed class Engine : IDisposable
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));
-        journal=new(Paths.At("changes.json"),settings);checks=new(events){ThreatFeed=feed};
+        journal=new(Paths.At("changes.json"),settings);domainHosts=new(events);checks=new(events){ThreatFeed=feed,DomainFeed=domainFeed,DomainBlocks=domainHosts};
+        try{domainHosts.Restore();}catch(Exception ex){events.Add(75,"Warning","Domain recovery requires attention",ex.Message);}
         cached=new(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,IdleResults(),[],[],0,0,0,null,"No validated intelligence feeds configured");
         // Recover durable intent first; never reapply a stale transaction over newer system settings.
         var conflicts=journal.Restore();if(conflicts.Count>0)events.Add(59,"Warning","Recovery preserved external changes",string.Join(", ",conflicts));
@@ -62,6 +64,10 @@ public sealed class Engine : IDisposable
                         return new(true,"Optional RDP source restrictions disabled and removed.");
                     }
                     case "selftest":return new(Catalog.All.Count==79&&journal.Entries.All(e=>e.Key==WindowsSettings.AutoRun),"Catalog and journal schema verified; this is not a full protection regression test");
+                    case "domains-on":
+                        if(!enabled)return new(false,"Turn on OTS monitoring before enabling optional domain blocking");
+                        domainHosts.Enable(domainFeed.Active);return new(true,domainHosts.Status);
+                    case "domains-off":domainHosts.Restore();return new(true,"Optional domain blocking removed; other hosts entries preserved");
                     default:return new(false,"Unsupported command");
                 }
             }
@@ -74,16 +80,18 @@ public sealed class Engine : IDisposable
         AtomicFile.Write(Paths.At("pre-activation.json"),JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,AutoRun=settings.Read(WindowsSettings.AutoRun)},Wire.Json));
         try
         {
-            journal.Apply(WindowsSettings.AutoRun,"255");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;sensors=new(events,networkGuard);sensors.Start();checks.Sensors=sensors;deception=new(events);
+            journal.Apply(WindowsSettings.AutoRun,"255");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;deception=new(events);sensors=new(events,networkGuard){Deception=deception,Domains=domainFeed};sensors.Start();checks.Sensors=sensors;
+            hostMonitor=new(events);checks.HostMonitor=hostMonitor;
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
             cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow,AuthenticationProtectionEnabled=false};
             events.Add(47,"Info","Protection activated","Narrow AutoRun hardening applied with rollback; system firewall policy preserved");
         }
-        catch{enabled=false;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;journal.Restore();throw;}
+        catch{enabled=false;hostMonitor?.Dispose();hostMonitor=null;checks.HostMonitor=null;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;journal.Restore();throw;}
     }
     private void Disable(DateTimeOffset? resume)
     {
-        enabled=false;epoch++;resumeAt=resume;Save();deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;
+        enabled=false;epoch++;resumeAt=resume;Save();hostMonitor?.Dispose();hostMonitor=null;checks.HostMonitor=null;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;
+        domainHosts.Restore();
         var conflicts=journal.Restore();if(conflicts.Count>0)events.Add(59,"Warning","External settings preserved",string.Join(", ",conflicts));
         cached=cached with{Enabled=false,Protection="Not Protected",Score=0,Confidence=0,Layers=IdleResults(),ResumeAt=resume,Time=DateTimeOffset.UtcNow,AuthenticationProtectionEnabled=false};
         events.Add(59,"Info","Stack disabled","Existing Windows protection and unrelated settings preserved");
@@ -98,7 +106,17 @@ public sealed class Engine : IDisposable
             {
                 lock(gate){if(!enabled&&resumeAt!=null&&resumeAt<=DateTimeOffset.UtcNow)Enable();}
                 bool active;lock(gate)active=enabled;
-                if(active){await feed.RefreshIfDueAsync(ct);networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);}
+                if(active)
+                {
+                    await feed.RefreshIfDueAsync(ct);
+                    networkGuard?.Sweep(DateTimeOffset.UtcNow,feed.Active!=null);
+                    await domainFeed.RefreshIfDueAsync(ct);
+                    if(domainHosts.Applied && domainFeed.Active==null)
+                    {
+                        lock(gate)domainHosts.Restore();
+                        events.Add(75,"Warning","Expired domain protection removed","Domain feed unavailable or stale; managed hosts entries removed");
+                    }
+                }
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
                 // Resource governor uses measured service pressure and real free disk space.
                 long free=long.MaxValue,capacity=0;
@@ -143,7 +161,7 @@ public sealed class Engine : IDisposable
             using var process=Process.GetCurrentProcess();var now=DateTimeOffset.UtcNow;double cpu=(process.TotalProcessorTime-lastCpu).TotalSeconds/Math.Max((now-lastCpuAt).TotalSeconds,1)/Environment.ProcessorCount*100;lastCpu=process.TotalProcessorTime;lastCpuAt=now;
             var score=Posture.Calculate(results,true);
             lock(gate){if(!enabled||epoch!=version)return;
-            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary,networkGuard?.AuthenticationProtectionEnabled==true);
+            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary+" | "+domainFeed.Status,networkGuard?.AuthenticationProtectionEnabled==true);
             if(!governor.DeferNonessentialDiskWork&&events.ConsumeSnapshotRequest())
             {
                 var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
@@ -160,8 +178,30 @@ public sealed class Engine : IDisposable
         LayerResult Good(string text,LayerMode mode=LayerMode.Monitoring,string limit="")=>new(id,mode,true,text,limit);
         switch(id)
         {
-            case 11:return deception?.Healthy==true?Good("Protected decoy-file modification watcher is active",limit:"Modification, rename, and deletion detection only; reads are not observed."):new(id,LayerMode.Unavailable,false,"Canary monitor unavailable");
-            case 12:case 13:return deception?.Healthy==true?Good($"Loopback-only HTTP decoy listening on 127.0.0.1:{deception.Port}",limit:"Local connections only; no external DNS/URL canary service or off-machine detection."):new(id,LayerMode.Unavailable,false,"Decoy listener unavailable");
+            case 11:
+                if(deception?.FileMonitorHealthy != true)
+                    return new(id,LayerMode.Unavailable,false,"Canary filesystem watcher or independent hash verifier unavailable");
+                bool fileAudit = deception.AuditReady
+                    && sensors?.Has("Security")==true;
+                return Good($"Three isolated decoy files monitored with SHA-256 checks; audited 4663 reads={deception.AuditedReads}; read-audit setup: {deception.AuditStatus}",
+                    LayerMode.Monitoring,
+                    fileAudit
+                        ? "Windows Security 4663 access attribution is conditional on real events, audit policy and effective SACLs. Silent file reads cannot be proven absent."
+                        : "File tamper monitoring is active, but file-read attribution is unavailable: " + deception.AuditStatus);
+            case 12:
+                if(deception?.ListenerHealthy != true)
+                    return new(id,LayerMode.Unavailable,false,"Local canary URL listener unavailable");
+                return Good($"Unique local URL canary active on loopback port {deception.Port}; URL hits={deception.CanaryHits}; observed canary DNS events={deception.DnsHits}",
+                    LayerMode.Monitoring,
+                    sensors?.Has("Microsoft-Windows-DNS-Client/Operational")==true
+                        ? "Local DNS queries are monitored when Windows emits relevant DNS Client events. No off-machine endpoint exists, and no remote detection is claimed."
+                        : "Windows DNS Client event channel is unavailable: only the loopback canary URL is monitored. No external canary endpoint is configured.");
+            case 13:
+                return deception?.ListenerHealthy == true
+                    ? Good($"Loopback-only decoy HTTP listener on 127.0.0.1:{deception.Port}; observed service probes={deception.DecoyHits}; concurrency limit=6, request cap=2 KiB, timeout=2 seconds",
+                        LayerMode.Monitoring,
+                        "No public interface, vulnerable backend, remote-source enforcement or source bans. Local probes are evidence, not proof of compromise.")
+                    : new(id,LayerMode.Unavailable,false,"Decoy service unavailable or listener stopped");
             case 53:
                 return WatchdogRunning()
                     ?Good("Independent watchdog Windows service is running; primary SCM recovery policy configured",limit:"Crash-loop throttling is SCM-controlled; physical failure injection and recovery evidence are still required.")
@@ -175,17 +215,30 @@ public sealed class Engine : IDisposable
             case 57:return new(id,LayerMode.Unavailable,false,"Pinned ECDSA signed-manifest verification is implemented but automatic trusted updates remain disabled until a publisher key and signed release are provisioned","Hash-only or unsigned downloads are not accepted as an authenticated software update. No executable dependencies download at launch.");
             case 58:return File.Exists(Path.Combine(AppContext.BaseDirectory,"SBOM.json"))?Good("Installed package includes a build SBOM",LayerMode.Auditing,"SBOM presence is inventory evidence, not an independent integrity or vulnerability guarantee."):new(id,LayerMode.Unavailable,false,"Build SBOM not present beside service");
             case 59:
-                var active=journal.Entries.Where(e=>e.State=="applied").ToArray();bool intact=active.All(e=>settings.Read(e.Key)==e.Applied);
-                return intact?Good($"{active.Length} journaled settings still match OTS-applied values",LayerMode.Monitoring):new(id,LayerMode.Auditing,false,"An owned setting changed externally; it will be preserved on restore");
-            case 60:return Good("Severity-labelled, deduplicated event history connected to dashboard",limit:"Desktop notifications require the running interactive application; external messaging is not configured.");
+                var active=journal.Entries.Where(e=>e.State=="applied").ToArray();
+                bool intact=active.All(e=>settings.Read(e.Key)==e.Applied);
+                bool firewallSafe=networkGuard?.Operational==true &&
+                    !networkGuard.Health.Contains("preserved",StringComparison.OrdinalIgnoreCase) &&
+                    !networkGuard.Health.Contains("failed",StringComparison.OrdinalIgnoreCase);
+                return intact&&firewallSafe
+                    ?Good($"{active.Length} journaled settings match OTS-owned values; temporary firewall guard verifies exact rule properties before cleanup",LayerMode.Monitoring,
+                        "Third-party rule changes are preserved rather than forcefully reverted; full WFP policy precedence and external rule ownership require further audit.")
+                    :new(id,LayerMode.Auditing,false,
+                        $"Rule safety requires attention: journal matched={intact}; guard={networkGuard?.Health??"unavailable"}",
+                        "No broad rollback is attempted against unknown or modified firewall rules.");
+            case 60:return Good("Bounded event history persists without the WPF UI; high-severity incidents also attempt Windows Application Event Log delivery",
+                limit:"Desktop notifications require an interactive session. Off-device delivery, disk-full and native Event Log reliability testing remain incomplete.");
             case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging or integrity degraded: "+events.LastError,"Stored logs require administrator review; in-memory events are bounded.");
                 return events.LegacyChainGaps>0
                     ?new(id,LayerMode.Auditing,false,$"{events.VerifiedRetainedEvents} authenticated records; {events.LegacyChainGaps} gaps in retained history", "Historical continuity cannot be established; protected event log inspection recommended.")
                     :Good($"HMAC-authenticated retained log entries: {events.VerifiedRetainedEvents}; historical counters restored on restart",limit:"Encrypted DPAPI integrity key is machine-local; finite retention and local administrator control remain trust limitations.");
             case 62:return Good($"Measured resource governor: {governor.CycleInterval.TotalSeconds:0}s cycle, {governor.InventoryInterval.TotalMinutes:0}m inventory. {governor.Reason}",limit:"Low disk defers optional snapshots and quarterly reports; urgent event logging remains enabled. Full battery, memory, and disk stress qualification still required.");
             case 63:return feed.Active is { } intel
-                ?Good($"Official Feodo C2 IP source timestamp {intel.UpdatedUtc:O}; {intel.Addresses.Count} current indicators",LayerMode.Monitoring,"HTTPS transport and dated source are verified, but the feed is not cryptographically signed. Domain feeds and ruleset validation remain missing.")
-                :new(id,LayerMode.Unavailable,false,feed.Summary,"No stale or unverified indicators are used. No blocking policies are installed.");
+                ?new(id,LayerMode.Auditing,false,
+                    $"Feodo HTTPS publication timestamp {intel.UpdatedUtc:O} is within the freshness window; {intel.Addresses.Count} parsed indicators; publisher signature is NOT verified",
+                    "HTTPS and a source timestamp are not a cryptographic feed signature. Observed matches may trigger temporary rules under other layers; broader authenticated feed coverage remains incomplete.")
+                :new(id,LayerMode.Unavailable,false,feed.Summary,
+                    "No valid current feed available. Previous intelligence-based rules are removed during normal maintenance; independent signed feed authenticity is not configured.");
             case 64:return Good("Log-integrity key is encrypted by machine DPAPI in administrator/SYSTEM-only storage",LayerMode.Enforcing,"Local administrators remain trusted; DPAPI is not off-device protection.");
             case 66:return Good("High-severity events request a protected JSON snapshot on the next completed health cycle",LayerMode.Monitoring,"Preserves available layer health, recent events and process-associated TCP metadata; bounded to 10 snapshots. No full memory dump or guaranteed capture after abrupt power loss.");
             case 67:return Good("Weighted capability-health score; unavailable/idle layers receive zero; not-applicable layers excluded",LayerMode.Auditing,"Score measures declared checks, not immunity or independently measured security effectiveness.");
@@ -198,5 +251,7 @@ public sealed class Engine : IDisposable
             default:return null;
         }
     }
-    public void Dispose(){deception?.Dispose();sensors?.Dispose();networkGuard?.Dispose();feed.Dispose();}
+    public void Dispose(){hostMonitor?.Dispose();deception?.Dispose();sensors?.Dispose();networkGuard?.Dispose();
+        try{if(domainHosts.Applied)domainHosts.Restore();}catch(Exception ex){events.Add(75,"Warning","Domain restore failed on shutdown",ex.Message);}
+        domainFeed.Dispose();feed.Dispose();}
 }
