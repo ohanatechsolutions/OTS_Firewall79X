@@ -24,13 +24,13 @@ public sealed class WindowsSettings : ISettingStore
         using var registry=Registry.LocalMachine.OpenSubKey(Explorer);
         if(registry?.GetValue(name)==null)return null;
         if(registry.GetValueKind(name)!=RegistryValueKind.DWord)
-            throw new InvalidDataException("Unexpected registry value kind for "+name);
+            return "non-DWORD:"+registry.GetValueKind(name); // observed external type: preserve on OFF
         return ((int)registry.GetValue(name)!).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
     public void Write(string key,string? value)
     {
         var name=RegistryName(key);
-        int? number=value==null?null:int.TryParse(value,System.Globalization.NumberStyles.None,
+        int? number=value==null?null:int.TryParse(value,System.Globalization.NumberStyles.Integer,
             System.Globalization.CultureInfo.InvariantCulture,out var n)?n:null;
         // Restore must accept the exact DWORD that existed before OTS changed it.
         // Enforcement values are constrained at the only journal.Apply call sites.
