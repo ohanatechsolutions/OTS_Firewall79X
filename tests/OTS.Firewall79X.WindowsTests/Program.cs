@@ -23,7 +23,7 @@ try
     if(args.Contains("--unprivileged"))
     {
         if(admin)throw new Exception("This probe must use a nonadministrator token");
-        foreach(var command in new[]{"on","off","pause","restore","report","selftest"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        foreach(var command in new[]{"on","off","pause","restore","report","selftest","authguard-on","authguard-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
         return 0;
     }
     if(!admin)throw new Exception("Administrative integration probe expected");

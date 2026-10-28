@@ -45,6 +45,22 @@ public sealed class Engine : IDisposable
                     case "pause":Disable(DateTimeOffset.UtcNow.AddMinutes(15));return new(true,"Paused for 15 minutes");
                     case "restore":Disable(null);return new(true,"Restoration completed; external changes were preserved");
                     case "report":return new(true,Reports.Generate(cached));
+                    case "authguard-on":
+                    {
+                        if(!enabled||networkGuard?.SetAuthenticationProtection(true)!=true)
+                            return new(false,"Enable OTS protection and verify the Windows firewall rule manager first");
+                        cached=cached with{AuthenticationProtectionEnabled=true};
+                        events.Add(41,"Info","Optional RDP login restrictions armed",
+                            "Administrator explicitly authorized temporary TCP 3389 restrictions for high-confidence nonexistent-account attacks.");
+                        return new(true,"Optional RDP-only attack guard enabled; 32 invalid-user RDP failures against five distinct nonexistent accounts required.");
+                    }
+                    case "authguard-off":
+                    {
+                        if(networkGuard!=null&&!networkGuard.SetAuthenticationProtection(false))
+                            return new(false,"Authentication guard cleanup failed; recovery may be required: "+networkGuard.Health);
+                        cached=cached with{AuthenticationProtectionEnabled=false};
+                        return new(true,"Optional RDP source restrictions disabled and removed.");
+                    }
                     case "selftest":return new(Catalog.All.Count==79&&journal.Entries.All(e=>e.Key==WindowsSettings.AutoRun),"Catalog and journal schema verified; this is not a full protection regression test");
                     default:return new(false,"Unsupported command");
                 }
@@ -60,7 +76,7 @@ public sealed class Engine : IDisposable
         {
             journal.Apply(WindowsSettings.AutoRun,"255");networkGuard=new(events);networkGuard.Start();checks.NetworkGuard=networkGuard;sensors=new(events,networkGuard);sensors.Start();checks.Sensors=sensors;deception=new(events);
             enabled=true;epoch++;inventoryCache.Clear();resumeAt=null;Save();lastCycle=DateTimeOffset.MinValue;
-            cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow};
+            cached=cached with{Enabled=true,Protection="Partially Protected",Layers=IdleResults(),ResumeAt=null,Time=DateTimeOffset.UtcNow,AuthenticationProtectionEnabled=false};
             events.Add(47,"Info","Protection activated","Narrow AutoRun hardening applied with rollback; system firewall policy preserved");
         }
         catch{enabled=false;deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;journal.Restore();throw;}
@@ -69,7 +85,7 @@ public sealed class Engine : IDisposable
     {
         enabled=false;epoch++;resumeAt=resume;Save();deception?.Dispose();deception=null;sensors?.Dispose();sensors=null;checks.Sensors=null;networkGuard?.Dispose();networkGuard=null;checks.NetworkGuard=null;
         var conflicts=journal.Restore();if(conflicts.Count>0)events.Add(59,"Warning","External settings preserved",string.Join(", ",conflicts));
-        cached=cached with{Enabled=false,Protection="Not Protected",Score=0,Confidence=0,Layers=IdleResults(),ResumeAt=resume,Time=DateTimeOffset.UtcNow};
+        cached=cached with{Enabled=false,Protection="Not Protected",Score=0,Confidence=0,Layers=IdleResults(),ResumeAt=resume,Time=DateTimeOffset.UtcNow,AuthenticationProtectionEnabled=false};
         events.Add(59,"Info","Stack disabled","Existing Windows protection and unrelated settings preserved");
     }
     [StructLayout(LayoutKind.Sequential)] private struct PowerStatus {public byte AcLine,BatteryFlag,BatteryPercent,Reserved;public uint LifeTime,FullLifeTime;}
@@ -127,7 +143,7 @@ public sealed class Engine : IDisposable
             using var process=Process.GetCurrentProcess();var now=DateTimeOffset.UtcNow;double cpu=(process.TotalProcessorTime-lastCpu).TotalSeconds/Math.Max((now-lastCpuAt).TotalSeconds,1)/Environment.ProcessorCount*100;lastCpu=process.TotalProcessorTime;lastCpuAt=now;
             var score=Posture.Calculate(results,true);
             lock(gate){if(!enabled||epoch!=version)return;
-            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary);
+            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary,networkGuard?.AuthenticationProtectionEnabled==true);
             if(!governor.DeferNonessentialDiskWork&&events.ConsumeSnapshotRequest())
             {
                 var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);

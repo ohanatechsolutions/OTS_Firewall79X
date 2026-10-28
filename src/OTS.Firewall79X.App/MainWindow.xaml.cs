@@ -50,6 +50,8 @@ public partial class MainWindow : Window
                 dashboard=dashboard with{Layers=layers,Score=score.Score,Confidence=score.Confidence,Events=dashboard.Events.Concat(userMonitor.Events()).OrderByDescending(e=>e.Time).Take(300).ToList()};
             }
             ProtectionText.Text=stale?"Protection status stale — service health requires attention":dashboard.Protection;
+            AuthGuardToggle.IsEnabled=dashboard.Enabled;
+            AuthGuardToggle.Content=dashboard.AuthenticationProtectionEnabled?"Disable optional RDP guard":"Enable optional RDP guard";
             Toggle.Content=dashboard.Enabled?"Turn OFF":"Turn ON";ScoreText.Text=stale?"Unknown":$"{dashboard.Score} / 100";ConfidenceText.Text=$"Observed data: {dashboard.Confidence:F1}%";
             BlockedText.Text=dashboard.BlockedEvents.ToString("N0");EventCountText.Text=dashboard.TotalEvents.ToString("N0");
             ResourceText.Text=$"Service working set: {dashboard.ServiceMemoryMb:F1} MB • CPU across all cores: {dashboard.CpuPercent?.ToString("F1")??"unknown"}% • last cycle {dashboard.Time.ToLocalTime():g}";
@@ -72,6 +74,18 @@ public partial class MainWindow : Window
         }
         catch(Exception ex){ShieldState.Text="UNAVAILABLE";ProtectionText.Text="Service unavailable — protection status unknown";ScoreText.Text="Unknown";StatusLine.Text=ex.Message+". Use Recovery if the service cannot start.";}
         finally{refreshing=false;}
+    }
+    private async void AuthGuardClick(object sender,RoutedEventArgs e)
+    {
+        if(dashboard?.Enabled!=true)return;
+        if(!dashboard.AuthenticationProtectionEnabled)
+        {
+            var answer=MessageBox.Show(
+                "This opt-in feature can temporarily reject legitimate RDP sessions from shared/public source addresses. It never changes Windows account lockout policy and affects TCP 3389 only. Do not enable it if you depend on remote desktop access to this PC. Enable for the current OTS service activation?",
+                "Temporary RDP source restrictions",MessageBoxButton.YesNo,MessageBoxImage.Warning);
+            if(answer!=MessageBoxResult.Yes)return;
+        }
+        await Command(dashboard.AuthenticationProtectionEnabled?"authguard-off":"authguard-on");
     }
     private async Task Command(string command)
     {
