@@ -29,6 +29,26 @@ Test("Port scan requires diverse ports",()=>{Assert(!Detections.Scan(Enumerable.
 Test("Beacon regularity requires enough observations",()=>{var now=DateTimeOffset.UtcNow;Assert(!Detections.IsBeacon([now,now.AddMinutes(1)]));Assert(Detections.IsBeacon(Enumerable.Range(0,10).Select(i=>now.AddMinutes(i)).ToArray()));Assert(!Detections.IsBeacon(Enumerable.Range(0,10).Select(i=>now.AddMinutes(i*i)).ToArray()));});
 Test("File burst ignores older events",()=>{var now=DateTimeOffset.UtcNow;Assert(!Detections.FileBurst(Enumerable.Repeat(now.AddMinutes(-1),100),now));Assert(Detections.FileBurst(Enumerable.Repeat(now,40),now));});
 Test("Execution detector does not flag ordinary shell invocation",()=>{Assert(Detections.ExecutionIndicator("powershell.exe","Get-Date")==null);Assert(Detections.ExecutionIndicator("powershell.exe","-EncodedCommand AAAA")!=null);});
+Test("Secrets scanner categorizes without retaining raw secret",()=>{
+    var token="ghp_"+new string('A',36);
+    var aws="AKIA"+new string('A',16);
+    var detected=Detections.SecretKinds("token="+token+"\nAWS="+aws+"\n-----BEGIN OPENSSH PRIVATE KEY-----");
+    Assert(detected.Count>=3&&detected.Any(x=>x.Contains("GitHub"))&&detected.Any(x=>x.Contains("AWS"))&&detected.Contains("Private key"));
+    Assert(!string.Join("|",detected).Contains(token)&&!string.Join("|",detected).Contains(aws));
+});
+Test("Secrets scanner rejects binary data and misleading placeholders",()=>{
+    Assert(Detections.SecretKinds("binary\0ghp_"+new string('A',36)).Count==0);
+    Assert(Detections.SecretKinds("password=REDACTED\nclient_secret=example").Count==0);
+    Throws<ArgumentOutOfRangeException>(()=>Detections.SecretKinds(new string('x',1024*1024+1)));
+});
+Test("Three-setting journal restores unchanged settings and preserves later edits",()=>{
+    var values=new Dictionary<string,string?>{{"autorun","0"},{"command",null},{"autoplay","0"}};
+    var store=new DictionaryStore(values);var j=new ChangeJournal(Temp(),store);
+    j.Apply("autorun","255");j.Apply("command","1");j.Apply("autoplay","1");
+    values["autoplay"]="third-party";
+    Assert(j.Restore().SequenceEqual(new[]{"autoplay"}));
+    Assert(values["autorun"]=="0"&&values["command"]==null&&values["autoplay"]=="third-party");
+});
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
@@ -143,3 +163,8 @@ Test("TPM and BitLocker unknown-state handling",()=>{
 });
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
+sealed class DictionaryStore(Dictionary<string,string?> values):ISettingStore
+{
+    public string? Read(string key)=>values.GetValueOrDefault(key);
+    public void Write(string key,string? value)=>values[key]=value;
+}
