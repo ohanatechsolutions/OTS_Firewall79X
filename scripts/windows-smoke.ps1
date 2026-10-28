@@ -73,6 +73,7 @@ Check 'Later independent changes are preserved on OFF' {
   if((Get-ItemProperty $policyPath -Name NoDriveTypeAutoRun).NoDriveTypeAutoRun -ne 128){throw 'Later external change overwritten'}
   if($null -eq $oldAutorun){Remove-ItemProperty $policyPath -Name NoDriveTypeAutoRun}else{Set-ItemProperty $policyPath -Name NoDriveTypeAutoRun -Value $oldAutorun -Type DWord}
 }
+Check 'Ephemeral inbound and intelligence rules install and rollback on disposable Windows host' { dotnet tests/OTS.Firewall79X.WindowsTests/bin/Release/net10.0-windows/OTS.Firewall79X.WindowsTests.dll --network-rule-probe; if($LASTEXITCODE -ne 0){throw 'Network firewall lifecycle verification failed'} }
 Check 'Existing firewall rules preserved' { AssertFirewallUnchanged after-off }
 Check 'Independent watchdog detects stopped primary and reports without UI' {
   Stop-Service OTSFirewall79X
