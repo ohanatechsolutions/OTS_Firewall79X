@@ -414,6 +414,53 @@ Test("Section D execution indicators require suspicious command or parent lineag
     Assert(Detections.ExecutionIndicator("wscript.exe","https://example.com/a.vbs")!=null);
     Assert(Detections.ExecutionIndicator("rundll32.exe","javascript:alert(1)")!=null);
 });
+Test("Section C endpoint parser rejects malformed and parses scoped IPv6",()=>{
+    var ip4=TrafficRules.ParseEndpoint("[192.168.1.10]:587");
+    Assert(ip4?.Port==587&&ip4.Address.ToString()=="192.168.1.10");
+    Assert(TrafficRules.ParseEndpoint("[2001:db8::1]:443")?.Port==443);
+    foreach(var bad in new[]{"1.2.3.4:80","[1.1.1.1]:-1","[1.1.1.1]:99999","[nope]:80","[::1]:NaN",new string('x',101)})
+        Assert(TrafficRules.ParseEndpoint(bad)==null,bad);
+    Assert(TrafficRules.NonLoopbackBind("[0.0.0.0]:8080"));
+    Assert(!TrafficRules.NonLoopbackBind("[::1]:8080"));
+});
+Test("Section C SMTP correlation covers common explicit submission ports",()=>{
+    foreach(var p in new[]{25,465,587,2525})Assert(TrafficRules.SmtpPort(p));
+    Assert(!TrafficRules.SmtpPort(443));
+    Assert(TrafficRules.SuspiciousMailClient("powershell",587));
+    Assert(TrafficRules.SuspiciousMailClient("unknown",25));
+    Assert(!TrafficRules.SuspiciousMailClient("thunderbird.exe",587));
+    Assert(!TrafficRules.SuspiciousMailClient("outlook",465));
+});
+Test("Section C neighbor alerts need two matching observations",()=>{
+    var tracker=new NeighborChangeTracker();
+    var old=new Dictionary<string,string>{{"3:192.168.1.1","001122334455"}};
+    var newer=new Dictionary<string,string>{{"3:192.168.1.1","AABBCCDDEEFF"}};
+    var gateway=new HashSet<string>{"192.168.1.1"};
+    Assert(tracker.Update(old,gateway).Count==0);
+    Assert(tracker.Update(newer,gateway).Count==0);
+    Assert(tracker.Update(old,gateway).Count==0);
+    Assert(tracker.Update(newer,gateway).Count==0);
+    var confirmed=tracker.Update(newer,gateway);
+    Assert(confirmed.Count==1&&confirmed[0].Gateway);
+    Assert(tracker.Update(newer,gateway).Count==0);
+    Assert(!TrafficRules.IsMac("000000000000"));
+    Assert(TrafficRules.IsMac("00-11-22-33-44-55"));
+});
+Test("Section C monotonic clock checks ignore ordinary passage of time",()=>{
+    var t=DateTimeOffset.Parse("2026-10-27T10:00:00+00:00");
+    Assert(!TrafficRules.ClockStep(t,10000,t.AddSeconds(30),40000,TimeSpan.FromSeconds(90)));
+    Assert(TrafficRules.ClockStep(t,10000,t.AddMinutes(4),40000,TimeSpan.FromSeconds(90)));
+    Assert(!TrafficRules.ClockStep(t,40000,t.AddMinutes(4),10000,TimeSpan.FromSeconds(90)));
+    Assert(!TrafficRules.RemoteClockDrift(t,t.AddSeconds(30),TimeSpan.FromSeconds(1),TimeSpan.FromSeconds(120)));
+    Assert(TrafficRules.RemoteClockDrift(t,t.AddMinutes(3),TimeSpan.FromSeconds(1),TimeSpan.FromSeconds(120)));
+    Assert(!TrafficRules.RemoteClockDrift(t,t.AddMinutes(3),TimeSpan.FromSeconds(30),TimeSpan.FromSeconds(120)));
+});
+Test("Section C MITRE mapping is limited to justified signals",()=>{
+    Assert(TrafficRules.MitreTechnique("repeated-logon-failures")!.Contains("T1110"));
+    Assert(TrafficRules.MitreTechnique("remote-rdp-logon")!.Contains("T1021.001"));
+    Assert(TrafficRules.MitreTechnique("script-powershell")!.Contains("T1059.001"));
+    Assert(TrafficRules.MitreTechnique("arbitrary-network-traffic")==null);
+});
 Test("WFP 5157 endpoint roles use remote DestAddress and local SourcePort",()=>{
     Assert(BlockedConnectionEvent.TryParseInboundTcp("%%14592","192.168.1.10","445","8.8.8.8","50420","6",out var evt));
     Assert(evt!=null&&evt.RemoteAddress=="8.8.8.8"&&evt.LocalPort==445&&evt.RemotePort==50420);
