@@ -22,7 +22,7 @@ The current preview is unsigned. Its build/install verification status is docume
 
 ## Desktop UI and branding
 
-The native WPF client uses a dark slate (#0F172A / #1E293B) theme with steel-blue (#34587C) accents, rounded security-status cards, a shield status badge, dark data grids, clear focus indicators, and a visible preview notice. It retains all existing security workflows and shows live service evidence rather than invented protection percentages. Supplied firewall artwork is in `src/OTS.Firewall79X.App/Assets/`: `AppLogo.png` is used for in-app branding, and `AppIcon.ico` is embedded as the application, window, installer and notification-area icon. This is a firewall product: no clipboard-history feed or clipboard synchronization has been added by this visual update.
+The WPF client has seven dark slate (#0F172A / #1E293B) security screens, steel-blue (#34587C) accents, rounded glass-style cards, a live shield status badge, event feed, searchable security layers, high-contrast data grids, native dark window chrome and visible development-preview notices. The interface displays actual local service evidence rather than invented protection percentages. The original high-resolution supplied artwork lives in `src/OTS.Firewall79X.App/Assets/`: `Brand.png` is the in-app logo; `Brand.ico` is used by the Windows executable, title bar, recovery executable, installer, shortcuts and notification area. The earlier `AppLogo.png` and `AppIcon.ico` assets remain in the repository as alternate source artwork, without overriding active branding. This is a firewall product; the visual refresh does not add clipboard-history storage or synchronization. CI exercises all seven screens, a compact layout and layer search, and creates PNG previews in build artifacts.
 
 ## System requirements
 
@@ -40,6 +40,6 @@ Use **Settings & Recovery → Restore previous configuration**, or the separate 
 
 ## Developer builds
 
-Build requirements apply to contributors, not installed users: pinned .NET SDK 10.0.403 and Inno Setup 6 on Windows. Run `scripts/build.ps1`; `scripts/windows-smoke.ps1` is restricted to disposable GitHub Actions runners. Dependencies are locked. `dotnet run --project tests/OTS.Firewall79X.Tests -c Release` executes core regressions. CI produces an installer, release ZIP, SBOM, checksums, build manifest, and real result files.
+Build requirements apply to contributors, not installed users: pinned .NET SDK 10.0.403 and Inno Setup 6 on Windows. Run `scripts/build.ps1`; `scripts/windows-smoke.ps1` is restricted to disposable GitHub Actions runners. Dependencies are locked. `dotnet run --project tests/OTS.Firewall79X.Tests -c Release` executes core regressions. CI produces an installer, release ZIP, SBOM, checksums, build manifest, screen previews, and real test result files.
 
 See [architecture](docs/ARCHITECTURE.md), [limitations](KNOWN_LIMITATIONS.md), [dependencies](EXTERNAL_TOOLS.md), and [security reporting](SECURITY.md).

@@ -1,14 +1,1 @@
-<Project Sdk="Microsoft.NET.Sdk">
- <PropertyGroup>
-  <TargetFramework>net10.0-windows</TargetFramework>
-  <OutputType>WinExe</OutputType>
-  <UseWPF>true</UseWPF>
-  <AssemblyName>OTS Firewall79X</AssemblyName>
-  <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
- </PropertyGroup>
- <ItemGroup>
-  <ProjectReference Include="../OTS.Firewall79X.Windows/OTS.Firewall79X.Windows.csproj"/>
-  <Resource Include="Assets/AppLogo.png"/>
-  <Resource Include="Assets/AppIcon.ico"/>
- </ItemGroup>
-</Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><ApplicationIcon>Assets/Brand.ico</ApplicationIcon><AssemblyName>OTS Firewall79X</AssemblyName></PropertyGroup><ItemGroup><ProjectReference Include="../OTS.Firewall79X.Windows/OTS.Firewall79X.Windows.csproj"/></ItemGroup><ItemGroup><Resource Include="Assets/Brand.png"/><Resource Include="Assets/Brand.ico"/><Content Include="Assets/Brand.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/></ItemGroup></Project>
