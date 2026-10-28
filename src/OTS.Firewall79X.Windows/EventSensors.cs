@@ -12,6 +12,8 @@ public sealed class EventSensors : IDisposable
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
     private int parsedDnsResponses;
+    private int networkProtectionDetections;
+    public int NetworkProtectionDetections=>Volatile.Read(ref networkProtectionDetections);
     public int ObservedDnsResponses=>Volatile.Read(ref parsedDnsResponses);
     private int fileReadEvents, browserFileEvents;
     public int ObservedAuditedFileReads=>Volatile.Read(ref fileReadEvents);
@@ -22,7 +24,7 @@ public sealed class EventSensors : IDisposable
     {
         Watch("Security","*[System[(EventID=4624 or EventID=4625 or EventID=4672 or EventID=4720 or EventID=4728 or EventID=4732 or EventID=4719 or EventID=5157 or EventID=4688 or EventID=4616 or EventID=4663)]]");
         Watch("System","*[System[(EventID=7045 or EventID=7040)]]");
-        Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
+        Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007 or EventID=1125 or EventID=1126)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
         Watch("Microsoft-Windows-PowerShell/Operational","*[System[(EventID=4104)]]");
         Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3008)]]");
@@ -56,10 +58,21 @@ public sealed class EventSensors : IDisposable
         {
             switch(record.Id)
             {
-                case 4624:events.Add(45,"Info","Login",$"Type {Get("LogonType")}; source {Get("IpAddress")}");break;
+                case 4624:
+                    events.Add(45,"Info","Login",$"Type {Get("LogonType")}; source {Get("IpAddress")}");
+                    if(Get("LogonType")=="10")
+                        events.Add(15,"Info","Remote RDP session indicator",
+                            "Windows logged a remote-interactive session; "+TrafficRules.MitreTechnique("remote-rdp-logon")+
+                            ". Session origin and authorization require review.");
+                    break;
                 case 4625:
                     events.Add(45,"Warning","Failed login",$"Source {Get("IpAddress")}; status {Get("Status")}");
-                    lock(sync){var ip=Get("IpAddress");if(failures.Count>4096)failures.Clear();if(!failures.TryGetValue(ip,out var q))failures[ip]=q=new();q.Enqueue(now);while(q.Count>0&&q.Peek()<now.AddMinutes(-2))q.Dequeue();if(q.Count>=8)events.Add(41,"High","Repeated failed authentication",$"{q.Count} failures from {ip} within 2 minutes; no automatic ban");}break;
+                    lock(sync){var ip=Get("IpAddress");if(failures.Count>4096)failures.Clear();if(!failures.TryGetValue(ip,out var q))failures[ip]=q=new();q.Enqueue(now);while(q.Count>0&&q.Peek()<now.AddMinutes(-2))q.Dequeue();if(q.Count>=8)
+                    {
+                        events.Add(41,"High","Repeated failed authentication",$"{q.Count} failures from {ip} within 2 minutes; no automatic ban");
+                        events.Add(15,"Warning","Authentication attack-pattern indicator",
+                            $"{q.Count} failures observed; {TrafficRules.MitreTechnique("repeated-logon-failures")}. No source restriction applied.");
+                    }}break;
                 case 4672:case 4720:case 4728:case 4732:case 4719:events.Add(27,"Warning","Account or privilege event",$"Security event {record.Id}; review Windows Security log for account details");break;
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
                 case 4663:
@@ -74,14 +87,35 @@ public sealed class EventSensors : IDisposable
                         events.Add(34,"Warning","Bulk audited file-read indicator",
                             $"{found.DistinctFiles} distinct files accessed by one process within one minute; backups and indexing can be legitimate. Copy/exfiltration has not been proven.");
                     break;
-                case 4688:var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"));if(indicator!=null)events.Add(36,"Warning","Suspicious execution indicator",indicator);break;
+                case 4688:
+                    var indicator=Detections.ExecutionIndicator(Get("NewProcessName"),Get("CommandLine"));
+                    if(indicator!=null)
+                    {
+                        events.Add(36,"Warning","Suspicious execution indicator",indicator);
+                        if(Path.GetFileName(Get("NewProcessName")).Equals("powershell.exe",StringComparison.OrdinalIgnoreCase)||
+                            Path.GetFileName(Get("NewProcessName")).Equals("pwsh.exe",StringComparison.OrdinalIgnoreCase))
+                            events.Add(15,"Warning","Script-execution technique hypothesis",
+                                TrafficRules.MitreTechnique("script-powershell")!+"; evidence is a Windows process-creation audit.");
+                    }
+                    break;
                 case 5157:
                     var address=Get("SourceAddress");int.TryParse(Get("DestPort"),out var port);
                     events.Add(15,"Info","Windows blocked connection",$"Source {address}; destination port {port}. OS block observed; not attributed to OTS enforcement.");
                     lock(sync){if(attempts.Count>4096)attempts.Clear();if(!attempts.TryGetValue(address,out var q))attempts[address]=q=new();q.Enqueue((now,port));while(q.Count>0&&(q.Peek().Time<now.AddMinutes(-1)||q.Count>1000))q.Dequeue();if(Detections.Scan(q.Select(x=>x.Port)))events.Add(3,"High","Possible port scan",$"Source {address}; distinct blocked destination ports within 60 seconds");if(q.Count>=100)events.Add(2,"High","High blocked-connection rate",$"Source {address}; {q.Count} blocked connection events in 60 seconds");}break;
             }
         }
-        else if(channel.Contains("Windows Defender"))events.Add(76,record.Id==1116?"High":"Info","Microsoft Defender event",$"Event {record.Id}; consult Windows Security Protection History for detection and remediation details");
+        else if(channel.Contains("Windows Defender"))
+        {
+            if(record.Id is 1125 or 1126)
+            {
+                Interlocked.Increment(ref networkProtectionDetections);
+                events.Add(14,record.Id==1126?"High":"Warning",
+                    record.Id==1126?"Defender Network Protection blocked a connection":"Defender Network Protection audit detection",
+                    $"Windows Defender Operational event {record.Id}; Windows-owned threat detection (not OTS IDS enforcement). Consult the original Windows event for target and rule details.");
+            }
+            else events.Add(76,record.Id==1116?"High":"Info","Microsoft Defender event",
+                $"Event {record.Id}; consult Windows Security Protection History for detection and remediation details");
+        }
         else if(channel.Contains("CodeIntegrity"))events.Add(26,"High","Code-integrity warning",$"Windows code-integrity event {record.Id}");
         else if(channel.Contains("PowerShell")){var text=Get("ScriptBlockText");var indicator=Detections.ExecutionIndicator("powershell.exe",text);if(indicator!=null)events.Add(36,"Warning","PowerShell indicator",indicator);}
         else if(channel.Contains("DNS-Client"))
@@ -92,7 +126,13 @@ public sealed class EventSensors : IDisposable
             if(finding.SuspiciousTransition)
                 events.Add(8,"Warning","Possible DNS rebinding pattern",
                     $"A publicly resolved DNS name subsequently returned a local/private address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
-            events.Add(16,"Info","DNS observation",$"{Get("QueryName")} {Get("QueryStatus")}");
+            var attributedPid=Get("ClientPID");
+            if(string.IsNullOrEmpty(attributedPid))attributedPid=Get("ClientProcessId");
+            string attribution=int.TryParse(attributedPid,out int clientPid)&&clientPid>0
+                ?$"provider-reported client PID {clientPid} (unverified)"
+                :"no trustworthy initiating-process attribution";
+            events.Add(16,"Info","DNS observation",
+                $"{Wire.Clean(Get("QueryName"),160)} status={Wire.Clean(Get("QueryStatus"),16)}; {attribution}");
         }
         else events.Add(25,"Warning","Service configuration changed",$"Windows event {record.Id}; service {Get("ServiceName")}");
     }
