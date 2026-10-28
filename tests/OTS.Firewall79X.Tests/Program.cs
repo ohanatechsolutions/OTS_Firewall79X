@@ -141,5 +141,87 @@ Test("TPM and BitLocker unknown-state handling",()=>{
     Assert(SecurityDeviceStates.VolumeProtected("0")==false);
     Assert(SecurityDeviceStates.VolumeProtected("2")==null);
 });
+
+Test("Section G: strict IPC request schema rejects property injection and duplicate keys",()=>{
+    void Bad(string json)
+    {
+        using var m=new MemoryStream();
+        Wire.WriteAsync(m,new Request("status"),default).GetAwaiter().GetResult();
+        var bytes=System.Text.Encoding.UTF8.GetBytes(json);
+        m.SetLength(0);m.Write(BitConverter.GetBytes(bytes.Length));m.Write(bytes);m.Position=0;
+        Throws<InvalidDataException>(()=>Wire.ReadAsync<Request>(m,1024,default).GetAwaiter().GetResult());
+    }
+    Bad("{\"Command\":\"off\",\"Unknown\":\"ignored\"}");
+    Bad("{\"Command\":\"status\",\"Command\":\"off\"}");
+    Bad("{\"Command\":\"status\",\"Layer\":1}");
+    Bad("{\"Command\":\"status\",\"Enabled\":true}");
+    Bad("{\"Command\":\"other\"}");
+    Bad("{\"Command\":null}");
+    Bad("[]");
+    Bad("{\"command\":\"status\"}");
+    Assert(Wire.ValidRequest(new Request("status")));
+    Assert(!Wire.ValidRequest(new Request("off",1)));
+});
+Test("Section G: restart throttling prevents rapid loops and resets after one hour",()=>{
+    var policy=new RestartBudget();var t=DateTimeOffset.UtcNow;
+    Assert(policy.TryAcquire(t));
+    Assert(!policy.TryAcquire(t.AddSeconds(2)));
+    Assert(policy.TryAcquire(t.AddMinutes(2)));
+    Assert(policy.TryAcquire(t.AddMinutes(4)));
+    Assert(!policy.TryAcquire(t.AddMinutes(6)));
+    Assert(policy.TryAcquire(t.AddHours(2)));
+    Assert(!policy.TryAcquire(t.AddHours(1)));
+});
+Test("Section G: independent watchdog heartbeat policy",()=>{
+    var now=DateTimeOffset.UtcNow;
+    Assert(!HeartbeatPolicy.IsStale(now.AddMinutes(-5),now,TimeSpan.FromMinutes(8)));
+    Assert(HeartbeatPolicy.IsStale(now.AddMinutes(-9),now,TimeSpan.FromMinutes(8)));
+    Assert(HeartbeatPolicy.IsStale(now.AddMinutes(6),now,TimeSpan.FromMinutes(8)));
+    Assert(!HeartbeatPolicy.IsStale(now,now,TimeSpan.Zero));
+});
+Test("Section G: resource budget honors battery, CPU, memory and low disk",()=>{
+    var ac=ResourceBudget.Evaluate(false,0,50,10L*1024*1024*1024,100L*1024*1024*1024);
+    Assert(ac.CycleInterval==TimeSpan.FromSeconds(30)&&!ac.DeferNonessentialDiskWork);
+    Assert(ResourceBudget.Evaluate(true,0,50,long.MaxValue,0).CycleInterval==TimeSpan.FromSeconds(90));
+    Assert(ResourceBudget.Evaluate(false,12,50,long.MaxValue,0).CycleInterval==TimeSpan.FromSeconds(60));
+    Assert(ResourceBudget.Evaluate(true,0,300,long.MaxValue,0).CycleInterval==TimeSpan.FromSeconds(180));
+    var disk=ResourceBudget.Evaluate(false,0,50,200L*1024*1024,100L*1024*1024*1024);
+    Assert(disk.DeferNonessentialDiskWork&&disk.CycleInterval>=TimeSpan.FromSeconds(180));
+    Throws<ArgumentOutOfRangeException>(()=>ResourceBudget.Evaluate(false,double.NaN,0,1,2));
+});
+Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and untrusted publisher",()=>{
+    using var publisher=System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+    using var impostor=System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+    var key=publisher.ExportSubjectPublicKeyInfo();var now=DateTimeOffset.UtcNow;
+    var folder=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(folder);
+    var file=Path.Combine(folder,"update.bin");File.WriteAllText(file,"verified bytes");
+    var digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
+    var manifest=new TrustedArtifacts.Manifest("OTS Firewall79X","2.0.0",now.AddMinutes(-1),now.AddHours(6),
+        "software",[new TrustedArtifacts.Artifact("update.bin",new FileInfo(file).Length,digest)]);
+    string Signed(TrustedArtifacts.Manifest data,System.Security.Cryptography.ECDsa signer)
+    {
+        var payload=JsonSerializer.SerializeToUtf8Bytes(data,Wire.Json);
+        var sig=signer.SignData(payload,System.Security.Cryptography.HashAlgorithmName.SHA256);
+        return JsonSerializer.Serialize(new TrustedArtifacts.Envelope(
+            Convert.ToBase64String(payload),Convert.ToBase64String(sig)),Wire.Json);
+    }
+    var envelope=Signed(manifest,publisher);
+    Assert(TrustedArtifacts.Verify(envelope,key,folder,new Version(1,0),now).Version=="2.0.0");
+    Throws<System.Security.Cryptography.CryptographicException>(()=>
+        TrustedArtifacts.Verify(Signed(manifest,impostor),key,folder,new Version(1,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(envelope,key,folder,new Version(3,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(Signed(manifest with{ExpiresUtc=now.AddSeconds(-1)},publisher),
+            key,folder,new Version(1,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(Signed(manifest with{Files=[new TrustedArtifacts.Artifact("../update.bin",1,digest)]},publisher),
+            key,folder,new Version(1,0),now));
+    File.WriteAllText(file,"tampered bytes");
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(envelope,key,folder,new Version(1,0),now));
+    Throws<InvalidDataException>(()=>
+        TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
