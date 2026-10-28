@@ -10,12 +10,12 @@ public sealed record LayerResult(int Id, LayerMode Mode, bool Healthy, string Ev
 public sealed record SecurityEvent(DateTimeOffset Time, int Layer, string Severity, string Kind, string Detail, bool Blocked = false);
 public sealed record Connection(int Pid, string Process, string Local, string Remote, string State);
 public sealed record Dashboard(bool Enabled, string Protection, int Score, double Confidence, DateTimeOffset Time, DateTimeOffset? ResumeAt, List<LayerResult> Layers, List<SecurityEvent> Events, List<Connection> Connections, long TotalEvents, long BlockedEvents, double ServiceMemoryMb, double? CpuPercent, string FeedStatus);
-public sealed record Request(string Command, int? Layer = null, bool? Enabled = null);
+public sealed record Request(string Command, int? Layer = null, bool? Enabled = null, string? Source = null, string? Destination = null, string? Secret = null);
 public sealed record Response(bool Ok, string Message, Dashboard? Dashboard = null);
 public static class Wire
 {
     public static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() }, MaxDepth = 32 };
-    public static readonly HashSet<string> Commands = ["status", "on", "off", "pause", "restore", "report", "selftest"];
+    public static readonly HashSet<string> Commands = ["status", "on", "off", "pause", "restore", "report", "selftest", "configure-backup", "configure-export", "disable-backup", "disable-export"];
     public static bool RequiresAdmin(string command) => command != "status";
     public static bool ValidRequest(Request? request) =>
         request is not null && request.Command is not null &&
