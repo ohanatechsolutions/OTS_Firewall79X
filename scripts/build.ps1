@@ -1,5 +1,13 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Parse all release signing scripts even in unsigned preview builds.
+# A broken production-only code path must not pass CI simply because keys are absent.
+foreach ($script in @('scripts/sign-release.ps1','scripts/verify-release-provenance.ps1')) {
+  $tokens=$null; $parseErrors=$null
+  $null=[System.Management.Automation.Language.Parser]::ParseFile(
+    (Resolve-Path $script).Path,[ref]$tokens,[ref]$parseErrors)
+  if (@($parseErrors).Count -gt 0) { throw "PowerShell parse failure in $script : $($parseErrors -join '; ')" }
+}
 function Native([scriptblock]$Command) { & $Command; if ($LASTEXITCODE -ne 0) { throw "Native command failed: $Command" } }
 New-Item -ItemType Directory -Force artifacts/release | Out-Null
 Native { dotnet restore OTS.Firewall79X.sln --locked-mode }
