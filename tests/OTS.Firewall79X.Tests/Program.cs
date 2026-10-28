@@ -79,6 +79,24 @@ Test("NuGet lockfile refuses malformed, unversioned or invalid package identifie
     Throws<InvalidDataException>(()=>NuGetLockParser.Parse("""{"dependencies":{"net10.0":{"name":{"resolved":"../secret"}}}}"""));
     Throws<InvalidDataException>(()=>NuGetLockParser.Parse(new string('a',1024*1024+1)));
 });
+Test("OSV batch parser correctly attributes exact NuGet package advisory IDs",()=>{
+    NuGetLockParser.Package[] packages=[new("Package.A","1.2.3"),new("Package.B","2.0.0")];
+    var parsed=OsvBatchValidator.Parse("""{"results":[{"vulns":[{"id":"GHSA-abcd-1234-5678"},{"id":"CVE-2025-12345"}]},{}]}""",packages);
+    Assert(parsed.Queried==2&&parsed.PackagesAffected==1&&parsed.AdvisoryCount==2&&parsed.Complete);
+    Assert(parsed.Findings.Single().Name=="Package.A");
+});
+Test("OSV parser refuses mismatched, malformed or unbounded untrusted results",()=>{
+    NuGetLockParser.Package[] packages=[new("Package.A","1.2.3")];
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse("""{"results":[]}""",packages));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse("""{"results":[{"vulns":"not an array"}]}""",packages));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse("""{"results":[{"vulns":[{"id":"../../bad"}]}]}""",packages));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.Parse(new string('x',1024*1024+1),packages));
+});
+Test("OSV result pagination is incomplete, never certified as fully checked",()=>{
+    NuGetLockParser.Package[] packages=[new("Package.A","1.2.3")];
+    var parsed=OsvBatchValidator.Parse("""{"results":[{"next_page_token":"future","vulns":[]}]}""",packages);
+    Assert(!parsed.Complete&&parsed.Findings.Single().NeedsAnotherPage&&parsed.AdvisoryCount==0);
+});
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
