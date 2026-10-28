@@ -446,5 +446,20 @@ Test("Section H configured-only resilience actions remain administrator-only",()
     var parsed=Wire.ReadAsync<Request>(stream,1024,default).GetAwaiter().GetResult();
     Assert(parsed.Command==request.Command&&parsed.Secret==request.Secret&&parsed.Destination==request.Destination);
 });
+Test("Section H strict IPC denies secret injection into ordinary commands",()=>{
+    Assert(!Wire.ValidRequest(new Request("status",Secret:"NeverLogThisPassword")));
+    Assert(!Wire.ValidRequest(new Request("configure-export",Destination:"X")));
+    Assert(Wire.ValidRequest(new Request("configure-export",Destination:"X",Secret:"NeverLogThisPassword")));
+    foreach(var json in new[]{
+        "{\\"Command\\":\\"status\\",\\"Secret\\":\\"unauthorized\\"}",
+        "{\\"Command\\":\\"configure-export\\",\\"Destination\\":\\"C:\\\\\\\\tmp\\"}",
+        "{\\"Command\\":\\"configure-export\\",\\"Destination\\":\\"X\\",\\"Secret\\":\\"twelve chars okay\\",\\"secret\\":\\"duplicated\\"}"})
+    {
+        using var frame=new MemoryStream();
+        var bytes=System.Text.Encoding.UTF8.GetBytes(json);
+        frame.Write(BitConverter.GetBytes(bytes.Length));frame.Write(bytes);frame.Position=0;
+        Throws<InvalidDataException>(()=>Wire.ReadAsync<Request>(frame,8192,default).GetAwaiter().GetResult());
+    }
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
