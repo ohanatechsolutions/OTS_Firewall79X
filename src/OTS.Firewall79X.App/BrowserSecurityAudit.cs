@@ -1,3 +1,4 @@
+using OTS.Firewall79X.Core;
 using System.Text.Json;
 using Microsoft.Win32;
 
@@ -39,22 +40,6 @@ internal static class BrowserSecurityAudit
         }
         catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or JsonException)
         {result?.Dispose();result=null;return false;}
-    }
-    private static bool Risky(JsonElement manifest)
-    {
-        if(manifest.ValueKind!=JsonValueKind.Object)return false;
-        foreach(var field in new[]{"permissions","optional_permissions","host_permissions","optional_host_permissions"})
-        {
-            if(!manifest.TryGetProperty(field,out var entries)||entries.ValueKind!=JsonValueKind.Array)continue;
-            foreach(var e in entries.EnumerateArray())
-            {
-                if(e.ValueKind!=JsonValueKind.String)continue;
-                var permission=e.GetString()??"";
-                if(DangerousPermissions.Contains(permission,StringComparer.OrdinalIgnoreCase)||
-                   permission is "<all_urls>" or "*://*/*" or "http://*/*" or "https://*/*")return true;
-            }
-        }
-        return false;
     }
     private static bool? SafeBrowsing(string profilePrefs,string policyPath)
     {
@@ -133,7 +118,7 @@ internal static class BrowserSecurityAudit
                             if(File.GetAttributes(version).HasFlag(FileAttributes.ReparsePoint))continue;
                             if(!TryJson(Path.Combine(version,"manifest.json"),128*1024,out var manifest))
                             {errors++;continue;}
-                            using(manifest){if(Risky(manifest!.RootElement))risky++;}
+                            using(manifest){if(Detections.BrowserManifestHasHighImpactPermissions(manifest!.RootElement))risky++;}
                             break; // newest manifest should be checked by version ordering in future
                         }
                         if(extensions>=1500)break;
