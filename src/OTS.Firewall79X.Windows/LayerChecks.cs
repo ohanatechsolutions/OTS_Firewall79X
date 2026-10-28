@@ -226,7 +226,7 @@ public sealed class LayerChecks : IDisposable
                     "SELECT Name,State,StartMode,PathName FROM Win32_Service WHERE Name='TermService' OR Name='sshd' OR Name='WinRM' OR Name='RemoteRegistry' OR Name LIKE '%VNC%' OR Name LIKE '%AnyDesk%' OR Name LIKE '%TeamViewer%' OR Name LIKE '%ScreenConnect%' OR Name LIKE '%RustDesk%'",
                     "Name","State","StartMode","PathName");
                 Changed(id,"Remote-management service state/startup/path",remote);
-                bool rdpEnabled=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Terminal Server","fDenyTSConnections") is int rdp&&rdp==0;
+                bool rdpEnabled=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\Terminal Server","fDenyTSConnections") is int rdpPolicyValue&&rdpPolicyValue==0;
                 if(previousRdpEnabled==false&&rdpEnabled)
                     events.Add(23,"High","Remote Desktop newly enabled","RDP policy now permits incoming connections. Firewall and external accessibility remain separate.");
                 previousRdpEnabled=rdpEnabled;
