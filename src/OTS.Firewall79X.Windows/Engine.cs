@@ -15,7 +15,7 @@ public sealed class Engine : IDisposable
     private ResourceBudget.Decision governor=ResourceBudget.Evaluate(false,0,0,long.MaxValue,0);
     private static bool WatchdogRunning(){using var svc=new ServiceController("OTSFirewall79XWatchdog");return svc.Status==ServiceControllerStatus.Running;}
     private readonly Dictionary<int,LayerResult> inventoryCache=[];
-    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,37,39,44,46,51,52];
+    private static readonly HashSet<int> InventoryLayers=[25,26,33,35,37,39,40,44,46,51,52];
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));

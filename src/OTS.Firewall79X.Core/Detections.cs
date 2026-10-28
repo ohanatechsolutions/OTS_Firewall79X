@@ -25,7 +25,20 @@ public static class Detections
         var name=Path.GetFileName(process??"").ToLowerInvariant(); var c=(command??"").ToLowerInvariant();
         if(name is "powershell.exe" or "pwsh.exe" && (c.Contains("-encodedcommand")||c.Contains("downloadstring(")||c.Contains("frombase64string(")))return "Encoded or download-capable PowerShell execution; review context";
         if(name is "mshta.exe" or "regsvr32.exe" && (c.Contains("http://")||c.Contains("https://")))return "Script-capable Windows binary referencing a remote URL";
+        if(name is "wscript.exe" or "cscript.exe" && (c.Contains("https://")||c.Contains("http://")))return "Script host referencing a remote URL";
+        if(name=="rundll32.exe"&&c.Contains("javascript:"))return "Script handler invoked via rundll32";
         if(name.EndsWith(".pdf.exe")||name.EndsWith(".jpg.exe"))return "Executable with misleading double extension";
+        return null;
+    }
+    public static string? ExecutionIndicator(string? process,string? command,string? parent)
+    {
+        var direct=ExecutionIndicator(process,command);
+        if(direct!=null)return direct;
+        var child=Path.GetFileName(process??"").ToLowerInvariant();
+        var source=Path.GetFileName(parent??"").ToLowerInvariant();
+        if(source is "winword.exe" or "excel.exe" or "powerpnt.exe" or "outlook.exe" &&
+           child is "powershell.exe" or "pwsh.exe" or "wscript.exe" or "cscript.exe" or "mshta.exe")
+            return "Office application spawned script-capable child; verify authorization";
         return null;
     }
     public static string? SecretKind(string text)
