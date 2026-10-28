@@ -92,10 +92,20 @@ Check 'Existing firewall rules preserved' { AssertFirewallUnchanged after-off }
 Check 'Independent watchdog detects stopped primary and reports without UI' {
   Stop-Service OTSFirewall79X
   try {
-    Start-Sleep -Seconds 80
-    $incidents = @(Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction Stop |
-      Where-Object { $_.ProviderName -eq 'OTSFirewall79XWatchdog' -and $_.Message -like '*Independent watchdog*' })
-    if ($incidents.Count -lt 1) { throw 'Watchdog did not record an independent outage' }
+    # The watchdog permits an initial 20-second grace, 20-second polling,
+    # and up to eight seconds per failed IPC probe. Three failures can take
+    # longer than 80 seconds depending on phase alignment and runner load.
+    if ((Get-Service OTSFirewall79XWatchdog).Status -ne 'Running') {
+      throw 'Independent watchdog was not running during the outage test'
+    }
+    $observed = $false
+    for ($attempt = 0; $attempt -lt 15; $attempt++) {
+      Start-Sleep -Seconds 10
+      $incidents = @(Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-7)} -ErrorAction Stop |
+        Where-Object { $_.ProviderName -eq 'OTSFirewall79XWatchdog' -and $_.Message -like '*Independent watchdog*' })
+      if ($incidents.Count -ge 1) { $observed = $true; break }
+    }
+    if (-not $observed) { throw 'Watchdog did not record an independent outage within 150 seconds' }
   } finally { Start-Service OTSFirewall79X }
 }
 Check 'Client rejects an impostor named-pipe server' {
