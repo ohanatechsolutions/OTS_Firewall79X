@@ -14,6 +14,11 @@ jobs:
   windows:
     runs-on: windows-2025
     timeout-minutes: 35
+    env:
+      OTS_RELEASE_CHANNEL: ${{ github.ref == 'refs/heads/main' && vars.OTS_RELEASE_CHANNEL || 'preview' }}
+      OTS_SIGNING_CERT_SHA256: ${{ vars.OTS_SIGNING_CERT_SHA256 }}
+      OTS_CODESIGN_PFX_BASE64: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.OTS_CODESIGN_PFX_BASE64 || '' }}
+      OTS_CODESIGN_PFX_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.OTS_CODESIGN_PFX_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9

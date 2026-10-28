@@ -100,6 +100,31 @@ try
     var integrity=status.Dashboard.Layers.Single(l=>l.Id==61);
     if(integrity.Mode==LayerMode.Unavailable || !integrity.Evidence.Contains("HMAC-authenticated"))
         throw new Exception("Stored log-integrity verification not operational: "+integrity.Evidence);
+    // Verify the DPAPI keyring survives process restart and preserves records
+    // from both key generations. No real host security policy is modified.
+    var logTest=Path.Combine(Paths.Root,"ci-integrity-"+Guid.NewGuid().ToString("N"));
+    try
+    {
+        var initial=new EventStore(logTest);
+        initial.Add(61,"Info","Test baseline","before rotation");
+        initial.RotateIntegrityKey();
+        initial.Add(61,"Info","Test rotation","after rotation");
+        var reopened=new EventStore(logTest);
+        if(reopened.LastError!=null||reopened.IntegrityKeyVersion!=1 ||
+            reopened.RetainedIntegrityKeys!=2||reopened.VerifiedRetainedEvents!=2||
+            reopened.Total!=2||reopened.LegacyChainGaps!=0)
+            throw new Exception("Key rotation did not preserve authenticated event history: "+reopened.LastError);
+        // A corrupted protected ring must fail closed instead of re-keying history.
+        var ringFile=Path.Combine(logTest,"keyring.dpapi");
+        var corrupted=File.ReadAllBytes(ringFile);corrupted[^1]^=0x80;
+        File.WriteAllBytes(ringFile,corrupted);
+        bool rejected=false;
+        try{_ = new EventStore(logTest);}
+        catch(System.Security.Cryptography.CryptographicException){rejected=true;}
+        catch(InvalidDataException){rejected=true;}
+        if(!rejected)throw new Exception("Corrupted DPAPI key ring was accepted");
+    }
+    finally {if(Directory.Exists(logTest))Directory.Delete(logTest,true);}
     var hardware=SecurityDeviceAudit.Read();
     if(!hardware.Evidence.Contains("TPM:")||!hardware.Evidence.Contains("OS drive protection:"))
         throw new Exception("Hardware security evidence unavailable even as an explicit unknown");

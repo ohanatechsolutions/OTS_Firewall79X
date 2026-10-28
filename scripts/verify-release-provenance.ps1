@@ -15,6 +15,9 @@ if ($manifest.version -ne '0.1.0' -or $sbom.bomFormat -ne 'CycloneDX' -or
     $sbom.specVersion -ne '1.5' -or @($manifest.files).Count -lt 1) {
   throw 'Invalid build manifest or software bill of materials'
 }
+if ($RequirePublisherSignature -and $env:OTS_SIGNING_CERT_SHA256 -notmatch '^[a-fA-F0-9]{64}$') {
+  throw 'Production release requires a 256-bit pinned publisher-certificate fingerprint'
+}
 $root = (Resolve-Path 'artifacts/publish').Path
 $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($entry in $manifest.files) {
@@ -31,6 +34,13 @@ foreach ($entry in $manifest.files) {
   }
   $actual = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash
   if ($actual -ne [string]$entry.sha256) { throw "Build manifest digest mismatch: $relative" }
+  if ($RequirePublisherSignature -and [IO.Path]::GetFileName($relative) -match '^OTS.*\.(exe|dll)$') {
+    $payloadSignature = Get-AuthenticodeSignature -LiteralPath $resolved
+    if ($payloadSignature.Status -ne 'Valid' -or -not $payloadSignature.SignerCertificate -or
+        $payloadSignature.SignerCertificate.GetCertHashString('SHA256') -ne $env:OTS_SIGNING_CERT_SHA256.ToUpperInvariant()) {
+      throw "Bundled executable fails pinned Authenticode verification: $relative"
+    }
+  }
 }
 $actualInstallerHash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $expectedLine = (Get-Content -LiteralPath $checksumPath -Raw).Trim()

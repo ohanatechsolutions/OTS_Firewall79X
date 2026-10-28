@@ -548,6 +548,51 @@ Test("Audited canary file access requires exact 4663 object identity and rights"
     Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"bad").Read);
     Assert(!DeceptionRules.ClassifyFileAudit("File",file,file,"0x80").Read);
 });
+Test("Section G: event log key rotation preserves linked authenticated history",()=>{
+    var key0=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    var key1=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    var previous=Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+    var h0=EventIntegrity.Compute(0,key0,previous,"legacy");
+    var h1=EventIntegrity.Compute(1,key1,h0,"rotated");
+    var lines=new[]{
+        JsonSerializer.Serialize(new EventIntegrity.Record(previous,"legacy",h0),Wire.Json),
+        JsonSerializer.Serialize(new EventIntegrity.Record(h0,"rotated",h1,1),Wire.Json)
+    };
+    var ring=new Dictionary<int,byte[]>{{0,key0},{1,key1}};
+    var verification=EventIntegrity.Verify(lines,ring);
+    Assert(verification.Verified==2 && verification.ChainGaps==0 && verification.LastHmac==h1);
+    Throws<InvalidDataException>(()=>EventIntegrity.Verify(lines,key0));
+    var compromised=JsonSerializer.Deserialize<EventIntegrity.Record>(lines[1],Wire.Json)! with{KeyId=0};
+    Throws<InvalidDataException>(()=>EventIntegrity.Verify(
+        new[]{lines[0],JsonSerializer.Serialize(compromised,Wire.Json)},ring));
+    Throws<InvalidDataException>(()=>EventIntegrity.Verify(
+        new[]{lines[0],lines[1].Replace("rotated","tampered",StringComparison.Ordinal)},ring));
+});
+
+Test("Section G: malformed DNS, feed and retained-log corpus remains bounded",()=>{
+    var rng=new Random(56065);
+    var detector=new DnsRebindingDetector();
+    var now=DateTimeOffset.UtcNow;
+    var key=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    for(int i=0;i<2500;i++)
+    {
+        var chars=new char[rng.Next(0,180)];
+        for(int j=0;j<chars.Length;j++)chars[j]=(char)rng.Next(1,127);
+        var raw=new string(chars);
+        var finding=detector.Observe(raw,raw,"0",now);
+        Assert(finding.AddressCount<=64);
+        try
+        {
+            _ = EventIntegrity.Verify(new[]{raw},key);
+            Assert(string.IsNullOrWhiteSpace(raw));
+        }
+        catch(InvalidDataException){/* A malformed log must fail closed. */}
+        try{_ = FeodoFeedParser.Parse(raw);}
+        catch(InvalidDataException){/* Unsupported/corrupted input rejected. */}
+    }
+    Assert(!detector.Observe(new string('A',8192),"8.8.8.8","0",now).ParsedAddressAnswer);
+    Assert(!detector.Observe("external.example",new string('A',8192),"0",now).ParsedAddressAnswer);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 
