@@ -11,6 +11,9 @@ public static class OwnedFirewallRule
 {
     public const string InboundPrefix = "OTS Firewall79X temporary inbound source ";
     public const string IntelligencePrefix = "OTS Firewall79X temporary outbound intelligence ";
+    public const string AuthenticationPrefix = "OTS Firewall79X temporary RDP authentication source ";
+    public const string AuthenticationDescription =
+        "OTS opt-in temporary RDP-only inbound restriction for repeated nonexistent-user attempts; 2-minute TTL; removed at OFF/startup";
     public const string InboundDescription =
         "OTS-owned temporary inbound restriction for repeated already-blocked attempts; reclaimed when disabled or expired";
     public const string IntelligenceDescription =
@@ -18,18 +21,24 @@ public static class OwnedFirewallRule
 
     public static bool HasReservedName(string? name) =>
         name != null && (name.StartsWith(InboundPrefix, StringComparison.Ordinal) ||
-                          name.StartsWith(IntelligencePrefix, StringComparison.Ordinal));
+                          name.StartsWith(IntelligencePrefix, StringComparison.Ordinal) ||
+                          name.StartsWith(AuthenticationPrefix, StringComparison.Ordinal));
 
     public static bool Matches(
         string? name, string? description, string? remoteAddresses,
-        int direction, int action, int protocol, int profiles, bool enabled)
+        int direction, int action, int protocol, int profiles, bool enabled,
+        string? localPorts = null)
     {
         if (name is null || !HasReservedName(name) || !enabled || action != 0 ||
-            protocol != 256 || profiles != int.MaxValue)
+            profiles != int.MaxValue)
             return false;
 
         bool outbound = name.StartsWith(IntelligencePrefix, StringComparison.Ordinal);
-        string address = name[(outbound ? IntelligencePrefix.Length : InboundPrefix.Length)..];
+        bool authentication = name.StartsWith(AuthenticationPrefix, StringComparison.Ordinal);
+        if (authentication ? protocol != 6 || localPorts != "3389" : protocol != 256)
+            return false;
+        string address = name[(outbound ? IntelligencePrefix.Length :
+            authentication ? AuthenticationPrefix.Length : InboundPrefix.Length)..];
         if (address.Length is < 3 or > 64 || !IPAddress.TryParse(address, out var ip) ||
             !NetworkAbuseWindow.EligiblePublicSource(address) ||
             (outbound && ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork))
@@ -38,8 +47,10 @@ public static class OwnedFirewallRule
         if (!string.Equals(address, ip.ToString(), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(remoteAddresses, address, StringComparison.OrdinalIgnoreCase))
             return false;
-        return outbound
-            ? direction == 2 && description == IntelligenceDescription
-            : direction == 1 && description == InboundDescription;
+        return authentication
+            ? direction == 1 && description == AuthenticationDescription
+            : outbound
+                ? direction == 2 && description == IntelligenceDescription
+                : direction == 1 && description == InboundDescription;
     }
 }

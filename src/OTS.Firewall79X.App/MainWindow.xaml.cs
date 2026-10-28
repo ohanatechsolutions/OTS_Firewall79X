@@ -16,7 +16,8 @@ public partial class MainWindow : Window
     private sealed record Row(int Id,string Name,string Category,string Mode,string Health,string Evidence,double? Duration);
     private DesktopNotifications? notifications;private DateTimeOffset lastAlert=DateTimeOffset.UtcNow,lastNotification=DateTimeOffset.MinValue;
     private Dashboard? dashboard;private List<Row> rows=[];private bool refreshing;private UserMonitor? userMonitor;private ExternalExposureAudit.Result? exposureResult;private PackageVulnerabilityAudit.Result? nugetAuditResult;private readonly DispatcherTimer timer;private bool ready;
-    private static readonly HttpClient http=new(){Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=5*1024*1024};
+    private static readonly HttpClient http=new(new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false})
+    {Timeout=TimeSpan.FromSeconds(20),MaxResponseContentBufferSize=1024*1024};
     public MainWindow()
     {
         InitializeComponent();SourceInitialized+=(_,_)=>NativeChrome.Apply(this);ready=true;timer=new(){Interval=TimeSpan.FromSeconds(5)};timer.Tick+=async(_,_)=>await Refresh();timer.Start();Loaded+=async(_,_)=>{FitWindowToDisplay();notifications=new(this);await Refresh();};Closed+=(_,_)=>{timer.Stop();userMonitor?.Dispose();notifications?.Dispose();};
@@ -71,6 +72,8 @@ public partial class MainWindow : Window
                     :l).ToList()};
             }
             ProtectionText.Text=stale?"Protection status stale — service health requires attention":dashboard.Protection;
+            AuthGuardToggle.IsEnabled=dashboard.Enabled;
+            AuthGuardToggle.Content=dashboard.AuthenticationProtectionEnabled?"Disable optional RDP guard":"Enable optional RDP guard";
             Toggle.Content=dashboard.Enabled?"Turn OFF":"Turn ON";ScoreText.Text=stale?"Unknown":$"{dashboard.Score} / 100";ConfidenceText.Text=$"Observed data: {dashboard.Confidence:F1}%";
             BlockedText.Text=dashboard.BlockedEvents.ToString("N0");EventCountText.Text=dashboard.TotalEvents.ToString("N0");
             ResourceText.Text=$"Service working set: {dashboard.ServiceMemoryMb:F1} MB • CPU across all cores: {dashboard.CpuPercent?.ToString("F1")??"unknown"}% • last cycle {dashboard.Time.ToLocalTime():g}";
@@ -93,6 +96,18 @@ public partial class MainWindow : Window
         }
         catch(Exception ex){ShieldState.Text="UNAVAILABLE";ProtectionText.Text="Service unavailable — protection status unknown";ScoreText.Text="Unknown";StatusLine.Text=ex.Message+". Use Recovery if the service cannot start.";}
         finally{refreshing=false;}
+    }
+    private async void AuthGuardClick(object sender,RoutedEventArgs e)
+    {
+        if(dashboard?.Enabled!=true)return;
+        if(!dashboard.AuthenticationProtectionEnabled)
+        {
+            var answer=MessageBox.Show(
+                "This opt-in feature can temporarily reject legitimate RDP sessions from shared/public source addresses. It never changes Windows account lockout policy and affects TCP 3389 only. Do not enable it if you depend on remote desktop access to this PC. Enable for the current OTS service activation?",
+                "Temporary RDP source restrictions",MessageBoxButton.YesNo,MessageBoxImage.Warning);
+            if(answer!=MessageBoxResult.Yes)return;
+        }
+        await Command(dashboard.AuthenticationProtectionEnabled?"authguard-off":"authguard-on");
     }
     private async Task Command(string command)
     {

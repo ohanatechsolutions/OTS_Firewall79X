@@ -19,11 +19,15 @@ try
         try{await client;throw new Exception("Client accepted an endpoint not owned by the registered service");}
         catch(UnauthorizedAccessException){return 0;}
     }
+    if(!EventSensors.SecurityEventQuery.Contains("EventID=4648",StringComparison.Ordinal) ||
+       !EventSensors.SecurityEventQuery.Contains("EventID=4778",StringComparison.Ordinal) ||
+       !EventSensors.SecurityEventQuery.Contains("EventID=4801",StringComparison.Ordinal))
+        throw new Exception("Section E Security event subscription omits required event classes");
     var status=await Ipc.SendAsync("status");if(!status.Ok||status.Dashboard?.Layers.Count!=79)throw new Exception("Status/catalog unavailable");
     if(args.Contains("--unprivileged"))
     {
         if(admin)throw new Exception("This probe must use a nonadministrator token");
-        foreach(var command in new[]{"on","off","pause","restore","report","selftest","domains-on","domains-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
+        foreach(var command in new[]{"on","off","pause","restore","report","selftest","domains-on","domains-off","authguard-on","authguard-off"}){var r=await Ipc.SendAsync(command);if(r.Ok||!r.Message.Contains("Administrator"))throw new Exception("Privilege boundary failed for "+command);}
         var protectedKey=Path.Combine(Paths.Root,"logs","integrity.dpapi");
         try{_ = File.ReadAllBytes(protectedKey);throw new Exception("Unprivileged user read the protected integrity key");}
         catch(UnauthorizedAccessException) { /* expected least-privilege boundary */ }
@@ -55,6 +59,17 @@ try
 
 
     if(!status.Dashboard.Enabled)throw new Exception("Protection expected enabled");
+    if(status.Dashboard.AuthenticationProtectionEnabled)
+        throw new Exception("Optional authentication blocking must always default off on service restart");
+    var enabledRdp=await Ipc.SendAsync("authguard-on");
+    if(!enabledRdp.Ok)throw new Exception("Privileged opt-in RDP guard failed: "+enabledRdp.Message);
+    var armed=await Ipc.SendAsync("status");
+    if(armed.Dashboard?.AuthenticationProtectionEnabled!=true)
+        throw new Exception("Authentication protection state not exposed by the service");
+    var disabledRdp=await Ipc.SendAsync("authguard-off");
+    if(!disabledRdp.Ok)throw new Exception("Optional RDP guard disable/cleanup failed: "+disabledRdp.Message);
+    if((await Ipc.SendAsync("status")).Dashboard?.AuthenticationProtectionEnabled==true)
+        throw new Exception("Authentication protection stayed armed after explicit OFF");
     var started=DateTimeOffset.UtcNow;
     while(status.Dashboard.Time<started.AddSeconds(-5)||!status.Dashboard.Layers.Any(l=>l.CheckedAt!=null))
     {

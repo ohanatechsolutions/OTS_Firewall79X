@@ -6,6 +6,45 @@ void Test(string name,Action action){try{action();Console.WriteLine("PASS "+name
 void Assert(bool b,string message="Assertion failed"){if(!b)throw new Exception(message);}
 void Throws<T>(Action a)where T:Exception{try{a();}catch(T){return;}throw new Exception("Expected "+typeof(T).Name);}
 string Temp()=>Path.Combine(Path.GetTempPath(),"OTS-tests-"+Guid.NewGuid().ToString("N"),"journal.json");
+
+Test("Section E optional RDP restrictions require strong nonexistent-user evidence",()=>{
+    var monitor=new AuthenticationFailureMonitor();var now=DateTimeOffset.UtcNow;
+    AuthenticationFailureMonitor.Finding finding=new(false,false,0,"","");
+    for(int i=0;i<31;i++)
+        finding=monitor.Observe("8.8.8.8","10",now.AddSeconds(i),"0xC0000064","absent"+(i%5));
+    Assert(!finding.RestrictionCandidate,"31 is below the block threshold");
+    finding=monitor.Observe("8.8.8.8","10",now.AddSeconds(31),"0xC0000064","absent0");
+    Assert(finding.RestrictionCandidate,"32 missing-user attempts across five identities must qualify");
+    Assert(!monitor.Observe("8.8.8.8","10",now.AddSeconds(32),"0xC0000064","absent1").RestrictionCandidate,"Cooldown must reject immediate repeat");
+    var validAccount=new AuthenticationFailureMonitor();
+    for(int i=0;i<60;i++)finding=validAccount.Observe("1.1.1.1","10",now.AddSeconds(i),"0xC000006A","realuser");
+    Assert(!finding.RestrictionCandidate,"Bad passwords for an existing user must never cause a source block");
+    var networkLogon=new AuthenticationFailureMonitor();
+    for(int i=0;i<60;i++)finding=networkLogon.Observe("9.9.9.9","3",now.AddSeconds(i),"0xC0000064","absent"+i);
+    Assert(!finding.RestrictionCandidate,"SMB/network logon type 3 must not create an RDP restriction");
+    var sameName=new AuthenticationFailureMonitor();
+    for(int i=0;i<60;i++)finding=sameName.Observe("8.8.4.4","10",now.AddSeconds(i),"0xC0000064","absent");
+    Assert(!finding.RestrictionCandidate,"One typo'd username must never trigger the guard");
+});
+Test("Section E local identity policy recognizes weaknesses without changing settings",()=>{
+    Assert(IdentityPasswordPolicy.Assess(8,0,uint.MaxValue,0).Risks.Count==4);
+    Assert(IdentityPasswordPolicy.Assess(14,10,90u*24u*3600u,10).Risks.Count==0);
+    Assert(IdentityPasswordPolicy.Assess(12,5,30u*24u*3600u,1).Risks.Count==0);
+});
+Test("OTS RDP rule ownership rejects spoofed or broadened rules",()=>{
+    var addr="8.8.8.8";
+    var name=OwnedFirewallRule.AuthenticationPrefix+addr;
+    Assert(OwnedFirewallRule.HasReservedName(name));
+    Assert(OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,addr,1,0,6,int.MaxValue,true,"3389"));
+    Assert(!OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,addr,1,0,6,int.MaxValue,true,"3388"));
+    Assert(!OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,addr,1,0,6,int.MaxValue,true,"0-65535"));
+    Assert(!OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,addr,1,0,256,int.MaxValue,true,"3389"));
+    Assert(!OwnedFirewallRule.Matches(name,"spoofed",addr,1,0,6,int.MaxValue,true,"3389"));
+    Assert(!OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,"8.8.4.4",1,0,6,int.MaxValue,true,"3389"));
+    Assert(!OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,addr,2,0,6,int.MaxValue,true,"3389"));
+    Assert(!OwnedFirewallRule.Matches(name,OwnedFirewallRule.AuthenticationDescription,addr,1,1,6,int.MaxValue,true,"3389"));
+    Assert(!OwnedFirewallRule.Matches(OwnedFirewallRule.AuthenticationPrefix+"192.168.1.2",OwnedFirewallRule.AuthenticationDescription,"192.168.1.2",1,0,6,int.MaxValue,true,"3389"));
+});
 Test("Catalog contains exactly 79 unique ordered requirements",()=>Assert(Catalog.All.Select(l=>l.Id).SequenceEqual(Enumerable.Range(1,79))));
 Test("OFF score is zero regardless of reported layers",()=>Assert(Posture.Calculate([new(1,LayerMode.Enforcing,true,"test")],false).Score==0));
 Test("Unavailable core layers reduce score",()=>Assert(Posture.Calculate([new(1,LayerMode.Unavailable,false,"missing"),new(2,LayerMode.Monitoring,true,"observed")],true).Score==25));
