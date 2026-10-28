@@ -8,7 +8,7 @@ public sealed class Engine : IDisposable
 {
     private sealed record Persisted(bool Enabled,DateTimeOffset? ResumeAt);
     private readonly object gate=new();private readonly EventStore events;private readonly ChangeJournal journal;private readonly WindowsSettings settings=new();private readonly LayerChecks checks;
-    private EventSensors? sensors;private DeceptionMonitor? deception;private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
+    private EventSensors? sensors;private DeceptionMonitor? deception;private readonly FeodoThreatFeed feed=new();private bool enabled;private DateTimeOffset? resumeAt;private Dashboard cached;
     private DateTimeOffset lastCycle=DateTimeOffset.MinValue;private DateTimeOffset nextReport;private TimeSpan lastCpu;private DateTimeOffset lastCpuAt=DateTimeOffset.UtcNow;
     private string? recoveryError;private int epoch;
     private readonly Dictionary<int,LayerResult> inventoryCache=[];
@@ -16,7 +16,7 @@ public sealed class Engine : IDisposable
     public Engine()
     {
         Paths.SecureDirectory(Paths.Root);events=new(Paths.At("logs"));
-        journal=new(Paths.At("changes.json"),settings);checks=new(events);
+        journal=new(Paths.At("changes.json"),settings);checks=new(events){ThreatFeed=feed};
         cached=new(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,IdleResults(),[],[],0,0,0,null,"No validated intelligence feeds configured");
         // Recover durable intent first; never reapply a stale transaction over newer system settings.
         var conflicts=journal.Restore();if(conflicts.Count>0)events.Add(59,"Warning","Recovery preserved external changes",string.Join(", ",conflicts));
@@ -79,6 +79,7 @@ public sealed class Engine : IDisposable
             {
                 lock(gate){if(!enabled&&resumeAt!=null&&resumeAt<=DateTimeOffset.UtcNow)Enable();}
                 bool active;lock(gate)active=enabled;
+                if(active)await feed.RefreshIfDueAsync(ct);
                 bool battery=GetSystemPowerStatus(out var power)&&power.AcLine==0;
                 var interval=TimeSpan.FromSeconds(battery?90:30);
                 // Back off after observed high service CPU/memory without inventing per-layer attribution.
@@ -115,7 +116,7 @@ public sealed class Engine : IDisposable
             using var process=Process.GetCurrentProcess();var now=DateTimeOffset.UtcNow;double cpu=(process.TotalProcessorTime-lastCpu).TotalSeconds/Math.Max((now-lastCpuAt).TotalSeconds,1)/Environment.ProcessorCount*100;lastCpu=process.TotalProcessorTime;lastCpuAt=now;
             var score=Posture.Calculate(results,true);
             lock(gate){if(!enabled||epoch!=version)return;
-            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,"No validated IP/domain feeds configured");
+            cached=new(true,"Partially Protected",score.Score,score.Confidence,now,resumeAt,results,events.Recent(),checks.Connections.Take(2000).ToList(),events.Total,events.Blocked,process.WorkingSet64/1048576.0,cpu,feed.Summary);
             if(events.ConsumeSnapshotRequest())
             {
                 var folder=Paths.At("snapshots");Paths.SecureDirectory(folder);
@@ -147,7 +148,9 @@ public sealed class Engine : IDisposable
             case 61:if(events.LastError!=null)return new(id,LayerMode.Unavailable,false,"Persistent logging or integrity degraded: "+events.LastError,"Stored logs require administrator review; in-memory events are bounded.");
                 return Good($"HMAC-authenticated retained log entries: {events.VerifiedRetainedEvents}; legacy chain discontinuities: {events.LegacyChainGaps}",limit:"Stored records are individually authenticated on service startup; chain links are continued across new restarts. Older builds restarted their chains, so historical end-to-end continuity cannot be guaranteed. Compressed segments rotate after 20; local administrators remain trusted.");
             case 62:return Good(battery?"Battery mode: 90-second normal telemetry, 15-minute heavy inventory":"AC mode: 30-second normal telemetry, 5-minute heavy inventory",limit:"Backoff follows measured service CPU/memory pressure. Bounded tables and serial audits; adaptive disk scheduling remains incomplete. Cached samples retain their true observation time.");
-            case 63:return new(id,LayerMode.Unavailable,false,"No configured threat feeds; freshness cannot be established");
+            case 63:return feed.Active is { } intel
+                ?Good($"Official Feodo C2 IP source timestamp {intel.UpdatedUtc:O}; {intel.Addresses.Count} current indicators",LayerMode.Monitoring,"HTTPS transport and dated source are verified, but the feed is not cryptographically signed. Domain feeds and ruleset validation remain missing.")
+                :new(id,LayerMode.Unavailable,false,feed.Summary,"No stale or unverified indicators are used. No blocking policies are installed.");
             case 64:return Good("Log-integrity key is encrypted by machine DPAPI in administrator/SYSTEM-only storage",LayerMode.Enforcing,"Local administrators remain trusted; DPAPI is not off-device protection.");
             case 66:return Good("High-severity events request a protected JSON snapshot on the next completed health cycle",LayerMode.Monitoring,"Preserves available layer health, recent events and process-associated TCP metadata; bounded to 10 snapshots. No full memory dump or guaranteed capture after abrupt power loss.");
             case 67:return Good("Weighted capability-health score; unavailable/idle layers receive zero; not-applicable layers excluded",LayerMode.Auditing,"Score measures declared checks, not immunity or independently measured security effectiveness.");
@@ -160,5 +163,5 @@ public sealed class Engine : IDisposable
             default:return null;
         }
     }
-    public void Dispose(){deception?.Dispose();sensors?.Dispose();}
+    public void Dispose(){deception?.Dispose();sensors?.Dispose();feed.Dispose();}
 }

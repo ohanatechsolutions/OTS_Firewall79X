@@ -11,6 +11,8 @@ public sealed class LayerChecks
     private readonly Dictionary<string,List<DateTimeOffset>> connectionsHistory=[];
     private readonly Dictionary<int,(TimeSpan Cpu,DateTimeOffset Time,DateTime Start)> processSamples=[];
     public EventSensors? Sensors {get;set;}
+    public FeodoThreatFeed? ThreatFeed {get;set;}
+    private readonly HashSet<string> intelAlerts=[];
     public List<Connection> Connections {get;private set;}=[];
     public string? NetworkError {get;private set;}
     public FirewallAudit? Firewall {get;}=new();
@@ -19,7 +21,7 @@ public sealed class LayerChecks
     public void Prepare()
     {
         firewall=null;NetworkError=null;
-        try{Connections=NetworkTables.Connections();TrackNetwork();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
+        try{Connections=NetworkTables.Connections();TrackNetwork();TrackIntel();}catch(Exception ex){Connections=[];NetworkError=ex.Message;}
         try{firewall=Firewall!.Read();}catch(Exception ex){events.Add(1,"Warning","Firewall query failed",ex.Message);}
     }
     private void TrackNetwork()
@@ -35,6 +37,24 @@ public sealed class LayerChecks
             if(c.Remote.EndsWith(":25")&&!new[]{"outlook","thunderbird"}.Contains(c.Process.ToLowerInvariant()))events.Add(22,"Warning","Unusual SMTP connection",$"{c.Process} connected to TCP 25");
         }
         previousConnections=current;
+    }
+    private void TrackIntel()
+    {
+        var intel=ThreatFeed?.Active;
+        if(intel==null)return;
+        foreach(var c in Connections.Where(c=>c.State=="Established"))
+        {
+            var endpoint=c.Remote;
+            int close=endpoint.LastIndexOf("]:",StringComparison.Ordinal);
+            if(close<2 || endpoint[0]!='[')continue;
+            var host=endpoint[1..close];
+            if(!intel.Addresses.Contains(host))continue;
+            var fingerprint=$"{c.Pid}:{host}";
+            if(intelAlerts.Count>2000)intelAlerts.Clear();
+            if(intelAlerts.Add(fingerprint))
+                events.Add(5,"High","Possible botnet C2 connection",
+                    $"Windows observed {Wire.Clean(c.Process,80)} (PID {c.Pid}) connected to a Feodo-listed IPv4 address; review network activity. No OTS block was applied.");
+        }
     }
     private LayerResult Good(int id,string evidence,LayerMode mode=LayerMode.Auditing,string limitation="")=>new(id,mode,true,evidence,limitation);
     private LayerResult Bad(int id,string evidence,string limitation="")=>new(id,LayerMode.Auditing,false,evidence,limitation);
@@ -66,7 +86,10 @@ public sealed class LayerChecks
             case 2:return Channel(id,"Security","Detects high rates of logged blocked connections; does not rate-limit SYN/ICMP/UDP floods or prevent link saturation.");
             case 3:return Channel(id,"Security","Detects 12 distinct blocked destination ports per source within 60 seconds; alerts without automatic bans.");
             case 4:return Missing(id,"Packet-level anti-spoofing and malformed-packet inspection are not implemented. Windows TCP/IP validation is not claimed as an OTS layer.");
-            case 5:return Missing(id,"No validated redistributable IP intelligence feed is bundled. No IP blocks are applied.");
+            case 5:
+                return ThreatFeed?.Active is { } intel
+                    ?Good(id,$"Observation-only: {intel.Addresses.Count} recent Feodo Tracker C2 IPv4 indicators; established outbound TCP connections compared each scan",LayerMode.Monitoring,"No source-blocking rules, domain intelligence, full UDP visibility or signed-feed proof. Only currently fresh source timestamps are accepted.")
+                    :Missing(id,ThreatFeed?.Summary??"Threat intelligence unavailable");
             case 7:
                 var model=SystemQueries.Wmi("root\\cimv2","SELECT Manufacturer,Model FROM Win32_ComputerSystem","Manufacturer","Model").FirstOrDefault();
                 var vm=string.Join(" ",model?.Values??Enumerable.Empty<string>());

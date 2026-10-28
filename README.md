@@ -21,6 +21,7 @@ The current preview is unsigned. Its build/install verification status is docume
 - Read-only UAC, DEP, LSA protection, and SMBv1 server-hardening indicators with explicit unknown statuses (not a full host hardening assessment).
 - HMAC authentication of retained security-log entries on service startup; chained records now continue across restarts. Legacy unlinked segments are disclosed.
 - Event Log subscriptions, services/drivers/accounts/USB inventory, connection and ARP baselines, narrow detection heuristics, and loopback-only canaries.
+- Optional read-only HTTPS Feodo Tracker recommended IPv4 C2 intelligence: bounded and date-validated input, periodic refresh, matching against observed established TCP destinations, and high-priority alerts. It does not add firewall rules; a stale or unavailable source is explicitly reported.
 - Optional current-user filesystem, camera/microphone registry, clipboard-address, browser-extension inventory, and native Defender scan requests.
 - Selected-folder secret-indicator scan, optional Pwned Passwords range check, reports, authenticated encrypted report archives, and versioned selected-folder backups with verified non-overwriting restore.
 
