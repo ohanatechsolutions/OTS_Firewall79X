@@ -6,11 +6,11 @@ using OTS.Firewall79X.Core;
 
 namespace OTS.Firewall79X.Windows;
 
-/// <summary>Non-authoritative public mirror; fail closed if it is stale, malformed or unreachable.</summary>
+/// <summary>Public URLhaus-derived filter; fail closed if it is stale, malformed or unreachable.</summary>
 public sealed class MaliciousDomainFeed : IDisposable
 {
     // Official URLhaus bulk exports currently require authentication; this public redistribution is not independently signed.
-    private const string Source = "https://raw.githubusercontent.com/StevenBlack/hosts/master/data/URLHaus/hosts";
+    private const string Source = "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt";
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.None })
         { Timeout = TimeSpan.FromSeconds(12) };
     private MaliciousDomainIntelligence.Snapshot? active;
@@ -25,7 +25,7 @@ public sealed class MaliciousDomainFeed : IDisposable
         }
     }
     public string Status => Active is { } feed
-        ? $"Public URLhaus mirror: {feed.Domains.Count} current exact hostnames; timestamp {feed.UpdatedUtc:O}; unsigned, observe-only by default"
+        ? $"Public URLhaus-derived mirror: {feed.Domains.Count} current exact hostnames; timestamp {feed.UpdatedUtc:O}; unsigned, observe-only by default"
         : "Domain intelligence unavailable/stale: " + message;
     public bool IsListed(string name)
     {
@@ -127,7 +127,7 @@ public sealed class DomainHostsProtection
             Write(current, updated);
             applied = true;
             evidence = $"Opt-in: {Math.Min(1000, feed.Domains.Count)} or fewer exact hostnames sinkholed; unsigned mirror; cache/DoH may bypass; rollback on OFF";
-            events?.Add(75, "Info", "Domain sinkhole enabled", "Administrator explicitly enabled the owned Windows hosts block; DNS-over-HTTPS and subdomains may bypass", true);
+            events?.Add(75, "Info", "Domain sinkhole enabled", "Administrator explicitly enabled the owned Windows hosts block; DNS-over-HTTPS and subdomains may bypass");
         }
     }
     public void Restore()
