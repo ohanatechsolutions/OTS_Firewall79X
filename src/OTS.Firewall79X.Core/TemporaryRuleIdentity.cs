@@ -27,8 +27,7 @@ public static class TemporaryRuleIdentity
         bool inbound=name!.StartsWith(InboundPrefix,StringComparison.Ordinal);
         string suffix=name[(inbound?InboundPrefix:OutboundPrefix).Length..];
         if(!NetworkAbuseWindow.EligiblePublicSource(suffix) ||
-           !IPAddress.TryParse(remoteAddresses,out var remote) ||
-           !suffix.Equals(remote.ToString(),StringComparison.Ordinal) ||
+           !OwnedFirewallRule.ExactHostAddress(remoteAddresses,suffix) ||
            direction!=(inbound?1:2) || action!=0 || protocol!=256)return false;
         // Allow narrowly specified legacy rules from earlier preview builds to
         // be reclaimed without deleting arbitrary similarly named user rules.
