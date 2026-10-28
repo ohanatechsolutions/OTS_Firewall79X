@@ -7,11 +7,12 @@ namespace OTS.Firewall79X.Windows;
 public static class Ipc
 {
     public const string PipeName="OTS.Firewall79X.v1";
-    public static async Task<Response> SendAsync(string command,CancellationToken ct=default)
+    public static Task<Response> SendAsync(string command,CancellationToken ct=default)=>SendAsync(new Request(command),ct);
+    public static async Task<Response> SendAsync(Request request,CancellationToken ct=default)
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(20));
         using var pipe=new NamedPipeClientStream(".",PipeName,PipeDirection.InOut,PipeOptions.Asynchronous,TokenImpersonationLevel.Impersonation);
-        await pipe.ConnectAsync(timeout.Token);PipeServerIdentity.Verify(pipe.SafePipeHandle);await Wire.WriteAsync(pipe,new Request(command),timeout.Token);
+        await pipe.ConnectAsync(timeout.Token);PipeServerIdentity.Verify(pipe.SafePipeHandle);await Wire.WriteAsync(pipe,request,timeout.Token);
         return await Wire.ReadAsync<Response>(pipe,4*1024*1024,timeout.Token);
     }
     public static async Task ServeAsync(Func<Request,Response> handle,Action<Exception> error,CancellationToken ct)
@@ -33,10 +34,10 @@ public static class Ipc
                 using var pipe=NamedPipeServerStreamAcl.Create(PipeName,PipeDirection.InOut,4,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,8192,8192,acl);
                 await pipe.WaitForConnectionAsync(ct);
                 using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(5));
-                var request=await Wire.ReadAsync<Request>(pipe,1024,timeout.Token);
+                var request=await Wire.ReadAsync<Request>(pipe,8192,timeout.Token);
                 bool admin=false;pipe.RunAsClient(()=>{using var identity=WindowsIdentity.GetCurrent(true);if(identity!=null)admin=new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);});
                 Response result;
-                if(!Wire.Commands.Contains(request.Command)) result=new(false,"Unknown command");
+                if(!Wire.ValidRequest(request)) result=new(false,"Invalid or unauthorized request shape");
                 else if(Wire.RequiresAdmin(request.Command)&&!admin)result=new(false,"Administrator authorization is required");
                 else result=handle(request);
                 await Wire.WriteAsync(pipe,result,timeout.Token);
