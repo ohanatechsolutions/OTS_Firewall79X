@@ -20,6 +20,10 @@ The current preview is unsigned. Its build/install verification status is docume
 - Optional current-user filesystem, camera/microphone registry, clipboard-address, browser-extension inventory, and native Defender scan requests.
 - Selected-folder secret-indicator scan, optional Pwned Passwords range check, reports, authenticated encrypted report archives, and versioned selected-folder backups with verified non-overwriting restore.
 
+## Desktop UI and branding
+
+The native WPF client uses a dark slate (#0F172A / #1E293B) theme with steel-blue (#34587C) accents, rounded security-status cards, a shield status badge, dark data grids, clear focus indicators, and a visible preview notice. It retains all existing security workflows and shows live service evidence rather than invented protection percentages. Supplied firewall artwork is in `src/OTS.Firewall79X.App/Assets/`: `AppLogo.png` is used for in-app branding, and `AppIcon.ico` is embedded as the application, window, installer and notification-area icon. This is a firewall product: no clipboard-history feed or clipboard synchronization has been added by this visual update.
+
 ## System requirements
 
 x64 Windows 11, or compatible Windows 10 builds (installer minimum 1809). Microsoft currently supports .NET 10 only on particular Windows editions/versions; Windows 10 Home compatibility and Windows 10/11 hardware testing are **not yet verified**. Windows Server 2025 CI is not a substitute for those tests. Administrator rights are required for installation and protected actions. Microsoft Defender-dependent features require its supported APIs/components. Optional breach queries require internet; baseline local monitoring does not.

@@ -16,6 +16,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 PrivilegesRequired=admin
 WizardStyle=modern
+SetupIconFile=..\src\OTS.Firewall79X.App\Assets\AppIcon.ico
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
