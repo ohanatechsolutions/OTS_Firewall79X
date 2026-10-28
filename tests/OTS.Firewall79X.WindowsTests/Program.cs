@@ -76,6 +76,20 @@ try
         if(decoyResponse.StatusCode!=System.Net.HttpStatusCode.NotFound)
             throw new Exception("Decoy service did not return safe 404");
     }
+    // A non-canary file in the same folder must not be treated as a honeytoken.
+    var beforeNegative=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+        e.Layer==11 && e.Kind=="Canary content tampered");
+    var unrelatedPath=Path.Combine(canaryFolder,"not-an-ots-decoy.txt");
+    try
+    {
+        File.WriteAllText(unrelatedPath,"unrelated test file");
+        await Task.Delay(400);
+        var afterNegative=(await Ipc.SendAsync("status")).Dashboard!.Events.Count(e=>
+            e.Layer==11 && e.Kind=="Canary content tampered");
+        if(afterNegative!=beforeNegative)
+            throw new Exception("Unrelated file produced a canary tamper false positive");
+    }
+    finally { File.Delete(unrelatedPath); }
     var originalCanary=File.ReadAllText(credentialsPath);
     try
     {
