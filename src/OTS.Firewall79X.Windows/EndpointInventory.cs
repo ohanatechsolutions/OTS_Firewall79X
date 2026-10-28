@@ -97,6 +97,37 @@ public static class EndpointInventory
             return (count,DockerDaemonAudit.Parse(null));
         return (count,DockerDaemonAudit.Parse(File.ReadAllText(file)));
     }
+    public static (int Keys,List<string> Values) UserMediaConsent()
+    {
+        int roots=0;List<string> values=[];
+        foreach(var sid in Profiles())
+        foreach(var capability in new[]{"webcam","microphone"})
+        {
+            try
+            {
+                var path=sid+@"\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\"+capability;
+                using var root=Registry.Users.OpenSubKey(path);
+                if(root==null)continue;
+                roots++;
+                foreach(var name in root.GetSubKeyNames().Take(256))
+                {
+                    using var app=root.OpenSubKey(name);
+                    if(app==null)continue;
+                    values.Add(sid+":"+capability+":"+name+":start="+app.GetValue("LastUsedTimeStart")+
+                        ":stop="+app.GetValue("LastUsedTimeStop"));
+                    if(name.Equals("NonPackaged",StringComparison.OrdinalIgnoreCase))
+                        foreach(var child in app.GetSubKeyNames().Take(256))
+                        {
+                            using var sub=app.OpenSubKey(child);
+                            if(sub!=null)values.Add(sid+":"+capability+":"+child+":start="+sub.GetValue("LastUsedTimeStart")+
+                                ":stop="+sub.GetValue("LastUsedTimeStop"));
+                        }
+                }
+            }
+            catch(UnauthorizedAccessException){}catch(System.Security.SecurityException){}
+        }
+        return (roots,values.Take(4096).Order(StringComparer.OrdinalIgnoreCase).ToList());
+    }
     public static BootPolicyAudit.Result BootOptions()
     {
         var exe=Path.Combine(Environment.SystemDirectory,"bcdedit.exe");
