@@ -34,7 +34,7 @@ foreach ($entry in $manifest.files) {
   }
   $actual = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash
   if ($actual -ne [string]$entry.sha256) { throw "Build manifest digest mismatch: $relative" }
-  if ($RequirePublisherSignature -and [IO.Path]::GetFileName($relative) -match '^OTS.*\\.(exe|dll)$') {
+  if ($RequirePublisherSignature -and [IO.Path]::GetFileName($relative) -match '^OTS.*\.(exe|dll)$') {
     $payloadSignature = Get-AuthenticodeSignature -LiteralPath $resolved
     if ($payloadSignature.Status -ne 'Valid' -or -not $payloadSignature.SignerCertificate -or
         $payloadSignature.SignerCertificate.GetCertHashString('SHA256') -ne $env:OTS_SIGNING_CERT_SHA256.ToUpperInvariant()) {
