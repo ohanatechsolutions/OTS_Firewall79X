@@ -10,7 +10,6 @@ foreach ($name in @('App','Service','Recovery')) {
   $output = "artifacts/publish/$($name.ToLowerInvariant())"
   Native { dotnet publish "src/OTS.Firewall79X.$name/OTS.Firewall79X.$name.csproj" -c Release -r win-x64 --self-contained true -p:RuntimeFrameworkVersion=10.0.14 -o $output }
 }
-# Signing must occur before the inventory hashes are recorded.
 if ($env:OTS_RELEASE_CHANNEL -eq 'production') { & ./scripts/sign-release.ps1 -Stage payload }
 $components = @{}
 Get-ChildItem src -Recurse -Filter project.assets.json | ForEach-Object {

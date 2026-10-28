@@ -11,6 +11,8 @@ public sealed class EventSensors : IDisposable
     private readonly AuthenticationFailureMonitor authenticationFailures=new();
     private readonly AuditedFileAccess access=new();
     private readonly DnsRebindingDetector dnsRebinding=new();
+    public MaliciousDomainFeed? Domains {get;set;}
+    public DeceptionMonitor? Deception { get; set; }
     private readonly TemporaryFirewallGuard? networkGuard;
     private int remoteFailedLoginEvents,loginSecurityEvents;
     public int ObservedRemoteLogonFailures=>Volatile.Read(ref remoteFailedLoginEvents);
@@ -43,7 +45,7 @@ public sealed class EventSensors : IDisposable
         Watch("Microsoft-Windows-Windows Defender/Operational","*[System[(EventID=1116 or EventID=1117 or EventID=5001 or EventID=5007)]]");
         Watch("Microsoft-Windows-CodeIntegrity/Operational","*[System[(Level=2 or Level=3)]]");
         Watch("Microsoft-Windows-PowerShell/Operational","*[System[(EventID=4104)]]");
-        Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3008)]]");
+        Watch("Microsoft-Windows-DNS-Client/Operational","*[System[(EventID=3006 or EventID=3008)]]");
     }
     private void Watch(string channel,string query)
     {
@@ -118,6 +120,7 @@ public sealed class EventSensors : IDisposable
                         $"Security event {record.Id}; target {Wire.Clean(Get("TargetUserName"),80)}; confirm authorization in Windows Security log.");break;
                 case 4616:events.Add(24,"Warning","System time changed",$"Previous {Get("PreviousTime")}; new {Get("NewTime")}");break;
                 case 4663:
+                    Deception?.ObserveFileAudit(Get("ObjectType"), Get("ObjectName"), Get("AccessMask"), Get("ProcessName"), Get("ProcessId"), Get("SubjectUserName"));
                     AuditedFileAccess.Finding found;
                     lock(sync)found=access.Observe(Get("ObjectType"),Get("ObjectName"),Get("ProcessName"),Get("AccessMask"),now);
                     if(found.AuditedRead)Interlocked.Increment(ref fileReadEvents);
@@ -166,12 +169,16 @@ public sealed class EventSensors : IDisposable
                 $"Windows event {record.Id}; inspect the original WMI Activity event for client process and operation.");
         else if(channel.Contains("DNS-Client"))
         {
+            Deception?.ObserveDnsQuery(Get("QueryName"));
+            if(record.Id != 3008) return;
             DnsRebindingDetector.Finding finding;
             lock(sync)finding=dnsRebinding.Observe(Get("QueryName"),Get("QueryResults"),Get("QueryStatus"),now);
             if(finding.ParsedAddressAnswer)Interlocked.Increment(ref parsedDnsResponses);
             if(finding.SuspiciousTransition)
                 events.Add(8,"Warning","Possible DNS rebinding pattern",
                     $"A publicly resolved DNS name subsequently returned a local/private address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
+            if(finding.ParsedAddressAnswer && Get("QueryStatus")=="0" && Domains?.IsListed(Get("QueryName"))==true)
+                events.Add(75,"High","Listed malicious-domain DNS lookup",$"Windows DNS event observed an exact current feed hostname: {Wire.Clean(Get("QueryName"),128)}. Source is a public unsigned mirror; verify context.");
             events.Add(16,"Info","DNS observation",$"{Get("QueryName")} {Get("QueryStatus")}");
         }
         else if(channel=="System")
