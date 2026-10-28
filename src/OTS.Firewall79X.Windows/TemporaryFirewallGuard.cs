@@ -77,7 +77,7 @@ public sealed class TemporaryFirewallGuard : IDisposable
     }
     private int RemoveOwned(dynamic policy)
     {
-        var inspection=InspectOwned(policy);
+        var inspection=InspectOwned((object)policy);
         foreach(var name in inspection.Verified)policy.Rules.Remove(name);
         if(inspection.Changed>0)
             events.Add(59,"Warning","Modified or spoofed OTS rule preserved",
@@ -201,7 +201,7 @@ public sealed class TemporaryFirewallGuard : IDisposable
             try
             {
                 policy=Policy();
-                var inspection=InspectOwned(policy);
+                var inspection=InspectOwned((object)policy);
                 foreach(var pair in active.Where(p=>p.Value<=now).ToArray())
                 {
                     string name=RuleName(pair.Key);
