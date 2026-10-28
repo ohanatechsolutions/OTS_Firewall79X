@@ -41,6 +41,7 @@ jobs:
             artifacts/vulnerability-report.json
             artifacts/*.log
             artifacts/ui/
+            artifacts/ui-preflight/
           if-no-files-found: error
           retention-days: 30
 

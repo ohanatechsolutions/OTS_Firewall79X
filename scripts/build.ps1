@@ -5,6 +5,7 @@ New-Item -ItemType Directory -Force artifacts/release | Out-Null
 Native { dotnet restore OTS.Firewall79X.sln --locked-mode }
 Native { dotnet build OTS.Firewall79X.sln -c Release --no-restore -m:1 }
 Native { dotnet run --project tests/OTS.Firewall79X.Tests -c Release --no-build }
+if ($env:GITHUB_ACTIONS -eq 'true') { Native { dotnet tests/OTS.Firewall79X.UiCapture/bin/Release/net10.0-windows/OTS.Firewall79X.UiCapture.dll artifacts/ui-preflight --render-only } }
 foreach ($name in @('App','Service','Recovery')) {
   $output = "artifacts/publish/$($name.ToLowerInvariant())"
   Native { dotnet publish "src/OTS.Firewall79X.$name/OTS.Firewall79X.$name.csproj" -c Release -r win-x64 --self-contained true -p:RuntimeFrameworkVersion=10.0.14 -o $output }
