@@ -42,7 +42,7 @@ public static class Wire
         if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Request must be an object");
         if (!root.TryGetProperty("Command", out var command) ||
             command.ValueKind != JsonValueKind.String || command.GetString() is not string name ||
-            name.Length is < 1 or > 64 || !Commands.Contains(name))
+            name.Length is < 1 or > 64)
             throw new InvalidDataException("Unsupported request command");
         bool configureBackup = name == "configure-backup";
         bool configureExport = name == "configure-export";
