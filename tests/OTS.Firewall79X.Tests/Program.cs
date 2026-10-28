@@ -183,6 +183,10 @@ Test("URLhaus domain parser validates header, exact names and source freshness",
     var feed=MaliciousDomainIntelligence.Parse(header+"127.0.0.1 evil-domain.example.net\n127.0.0.1 malicious-mirror.example.org\n127.0.0.1 evil-domain.example.net\n");
     Assert(feed.Domains.Count==2&&MaliciousDomainIntelligence.IsFresh(feed,now));
     Assert(!MaliciousDomainIntelligence.IsFresh(feed,now.AddDays(3)));
+    Assert(!MaliciousDomainIntelligence.IsFresh(feed,now.AddHours(13)));
+    var online="# Title: Online Malicious Hosts Blocklist\n# Updated: "+now.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ",System.Globalization.CultureInfo.InvariantCulture)+"\n# Expires: 12 hours (update frequency)\n# Source: https://urlhaus.abuse.ch/api/\n0.0.0.0 a.test-malicious.example.net\n0.0.0.0 b.test-malicious.example.org\n";
+    Assert(MaliciousDomainIntelligence.Parse(online).Domains.Count==2);
+    Assert(ManagedHostsSection.Remove("# other\n1.2.3.4 example.internal\r\n")=="# other\n1.2.3.4 example.internal\r\n");
     Assert(!MaliciousDomainIntelligence.ValidDomain("microsoft.com")&&!MaliciousDomainIntelligence.ValidDomain("x.github.com"));
     Assert(!MaliciousDomainIntelligence.ValidDomain("abc..org")&&!MaliciousDomainIntelligence.ValidDomain("127.0.0.1"));
     Assert(MaliciousDomainIntelligence.ValidDomain("evil-domain.example.net"));
