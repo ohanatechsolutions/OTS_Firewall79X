@@ -116,8 +116,7 @@ public sealed class EventStore
                         Wire.Clean($"Layer {layer}: {kind}; {detail}",1024),
                         System.Diagnostics.EventLogEntryType.Warning,7900+Math.Clamp(layer,0,79));
                 }
-                catch(Exception ex) when(ex is System.ComponentModel.Win32Exception or
-                    IOException or UnauthorizedAccessException or InvalidOperationException)
+                catch(Exception)
                 {
                     // Do not stop the protection engine when Windows Event Log is unavailable.
                 }
