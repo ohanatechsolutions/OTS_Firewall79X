@@ -1,7 +1,21 @@
-No open-source license has been selected for this repository.
+MIT License
 
-Copyright (c) 2026 Ohana Tech Solutions. All rights reserved unless separately authorized by the copyright holder.
+Copyright (c) 2026 Ohana Tech Solutions
 
-This notice does not replace or restrict the licenses of third-party components. Their original licenses and notices apply.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Recommendation for owner consideration: MIT for the original application source, with appropriate third-party notices. Adopting MIT would permit reuse, modification, and redistribution, including commercial use, subject to its notice requirement. No approval to adopt it is inferred here.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
