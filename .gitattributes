@@ -3,4 +3,3 @@
 *.ps1 text eol=crlf
 *.exe binary
 *.zip binary
-installer/OTS-Firewall79X-Setup.exe filter=lfs diff=lfs merge=lfs -text
