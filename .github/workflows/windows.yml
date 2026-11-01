@@ -1,9 +1,15 @@
 name: Windows build and installation verification
 on:
   push:
-    branches: [main, build/windows-security-stack, feat/section-g-self-protection-53-65, integration/section-b-latest-main, feature/section-b-rebased-11-13]
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -53,7 +59,7 @@ jobs:
             artifacts/ui/
             artifacts/ui-preflight/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   development-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
