@@ -1,14 +1,8 @@
 name: Section C network visibility verification
+# Section C is covered by windows.yml for pull requests.
+# Manual invocation remains available for focused Section C validation.
 on:
-  push:
-    branches:
-      - feat/section-c-network-visibility-14-24
-  pull_request:
-    paths:
-      - 'src/OTS.Firewall79X.Core/**'
-      - 'src/OTS.Firewall79X.Windows/**'
-      - 'tests/**'
-      - '.github/workflows/section-c.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -39,3 +33,4 @@ jobs:
             artifacts/windows-observed-status.json
             artifacts/*.log
           if-no-files-found: warn
+          retention-days: 7
