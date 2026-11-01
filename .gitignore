@@ -24,3 +24,7 @@ secrets.json
 *.sqlite3
 *.db
 *.log
+
+# Large installers are published as Release assets, not committed to Git/LFS
+installer/OTS-Firewall79X-Setup.exe
+installer/OTS-Firewall79X-Setup.exe.sha256
