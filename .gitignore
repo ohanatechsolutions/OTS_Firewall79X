@@ -5,3 +5,22 @@ artifacts/
 *.pfx
 *.key
 .vs/
+
+# Open-source publication security baseline
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.p12
+*.keystore
+id_rsa
+id_ed25519
+credentials.json
+secrets.json
+*.sqlite
+*.sqlite3
+*.db
+*.log
