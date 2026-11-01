@@ -1,0 +1,8 @@
+# Require maintainer review for protected branches when enabled.
+* @ohanatechsolutions
+
+/.github/ @ohanatechsolutions
+/installer/ @ohanatechsolutions
+/scripts/ @ohanatechsolutions
+/SECURITY.md @ohanatechsolutions
+/LICENSE @ohanatechsolutions
