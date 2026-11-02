@@ -33,4 +33,4 @@ jobs:
             artifacts/windows-observed-status.json
             artifacts/*.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 1
