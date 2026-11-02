@@ -60,7 +60,7 @@ jobs:
             artifacts/ui/
             artifacts/ui-preflight/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   development-release:
     # Never upload large installers to Git LFS automatically.
