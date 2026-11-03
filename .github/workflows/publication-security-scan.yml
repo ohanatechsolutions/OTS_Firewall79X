@@ -1,0 +1,87 @@
+name: Publication security scan (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepublication-history-security
+  cancel-in-progress: false
+
+jobs:
+  history-and-secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout full Git history without binary LFS downloads
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7, pinned commit (Node 24)
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          lfs: false
+          persist-credentials: false
+
+      - name: Prepare pinned scanner toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Install Gitleaks 8.30.1 through verified Go module checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          test -x "$HOME/go/bin/gitleaks"
+
+      - name: Scan all fetched branches and tags, without logging secret values
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Git commits reachable: $(git rev-list --count --all)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Remote branches fetched: $(git for-each-ref --format='%(refname)' refs/remotes/origin | wc -l)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tags fetched: $(git tag -l | wc -l)" >> "$GITHUB_STEP_SUMMARY"
+          historical_binary_paths=$(git log --all --name-only --pretty=format: -- '*.exe' '*.dll' '*.zip' '*.7z' '*.pfx' '*.p12' '*.pem' '*.key' | sed '/^$/d' | sort -u | wc -l)
+          echo "Historical binary / key-like paths requiring separate inspection: $historical_binary_paths" >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          "$HOME/go/bin/gitleaks" git --no-banner --redact=100 --log-opts="--all" --report-format=json --report-path "$RUNNER_TEMP/gitleaks-private.json" . > "$RUNNER_TEMP/gitleaks-private.log" 2>&1
+          result=$?
+          set -e
+          SCAN_RESULT="$result" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          exit_code = int(os.environ['SCAN_RESULT'])
+          report_path = Path(os.environ['RUNNER_TEMP']) / 'gitleaks-private.json'
+          data = []
+          if report_path.exists():
+              try:
+                  data = json.loads(report_path.read_text())
+                  if data is None:  # JSON null denotes no findings in some versions
+                      data = []
+                  if not isinstance(data, list):
+                      raise ValueError('Unexpected scan report schema')
+              except (OSError, ValueError):
+                  print('Gitleaks output could not be safely interpreted.')
+                  sys.exit(2)
+          if exit_code not in (0, 1):
+              print('Gitleaks failed operationally. Review trusted scanner installation and Git checkout.')
+              sys.exit(2)
+          if exit_code == 1 and not data:
+              print('Gitleaks returned findings but no readable sanitized count. Treat this as incomplete.')
+              sys.exit(2)
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+              summary.write(f'Gitleaks potential secret findings: **{len(data)}**\n\n')
+              summary.write('No secret values, matching source lines, or raw scanner reports are uploaded.\n\n')
+              summary.write('**This check does not inspect Git LFS payloads, executable internals, Actions logs, or older Release assets.**\n')
+          print('Secret-pattern audit completed; inspect the sanitized step summary for the finding count.')
+          PY
+          rm -f "$RUNNER_TEMP/gitleaks-private.json" "$RUNNER_TEMP/gitleaks-private.log"
+          if [ "$result" -eq 1 ]; then
+            echo 'Potential secret finding(s) detected. Review with a trusted local scanner before publication.'
+            exit 1
+          fi
+          test "$result" -eq 0
