@@ -1,0 +1,117 @@
+name: Historical release asset security check (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firewall79x-release-security-review
+  cancel-in-progress: false
+
+jobs:
+  inspect-releases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Inspect every published release without executing assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, tempfile, zipfile
+          from pathlib import Path
+
+          patterns=[
+              re.compile(rb'gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}',re.I),
+              re.compile(rb'(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}'),
+              re.compile(rb'(?:sk_live|rk_live)_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}',re.I),
+              re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----',re.I),
+              re.compile(rb'(?:postgres(?:ql)?|mongodb(?:\\+srv)?|mysql|redis)://[^\\s:@/]+:[^\\s@/]+@',re.I),
+          ]
+          MAX_BYTES=350*1024*1024
+          MAX_ZIP_UNPACK=1024*1024*1024
+          def run(args):
+              p=subprocess.run(args,capture_output=True,text=True,timeout=1200)
+              if p.returncode: raise RuntimeError('GitHub release API or asset download failed')
+              return p.stdout
+          def check_stream(stream,limit):
+              prev=b''
+              read=0
+              detected=False
+              while True:
+                  chunk=stream.read(1024*1024)
+                  if not chunk: break
+                  read+=len(chunk)
+                  if read>limit: raise ValueError('inspection size limit')
+                  data=prev+chunk
+                  if any(pattern.search(v) for pattern in patterns for v in (data,data[::2],data[1::2])):
+                      detected=True
+                  prev=data[-512:]
+              return detected
+          try:
+              releases=json.loads(run(['gh','api','--paginate','--slurp',f'repos/{os.environ["GITHUB_REPOSITORY"]}/releases?per_page=100']))
+              releases=[v for page in releases for v in page]
+          except (RuntimeError,ValueError,KeyError):
+              print('Cannot safely enumerate all releases.')
+              sys.exit(2)
+          audited=0; asset_count=0; suspect=0; incomplete=0; zip_entries=0
+          with tempfile.TemporaryDirectory(prefix='firewall79x-releases-') as temp:
+              for release in releases:
+                  assets=release.get('assets') or []
+                  if not assets:
+                      audited+=1
+                      continue
+                  dest=Path(temp)/f'r{audited}'
+                  dest.mkdir()
+                  try:
+                      run(['gh','release','download',release['tag_name'],'--repo',os.environ['GITHUB_REPOSITORY'],'--dir',str(dest)])
+                  except (RuntimeError,KeyError):
+                      incomplete+=len(assets)
+                      audited+=1
+                      continue
+                  for asset in assets:
+                      asset_count+=1
+                      f=dest/Path(asset['name']).name
+                      if not f.is_file() or f.stat().st_size>MAX_BYTES:
+                          incomplete+=1
+                          continue
+                      try:
+                          with f.open('rb') as stream:
+                              suspect+=int(check_stream(stream,MAX_BYTES))
+                          if f.suffix.lower() in ('.zip','.jar','.nupkg'):
+                              with zipfile.ZipFile(f) as z:
+                                  entries=z.infolist()
+                                  if len(entries)>10000 or sum(e.file_size for e in entries)>MAX_ZIP_UNPACK:
+                                      incomplete+=1
+                                  else:
+                                      for entry in entries:
+                                          if entry.is_dir(): continue
+                                          zip_entries+=1
+                                          if entry.file_size>MAX_BYTES:
+                                              incomplete+=1
+                                              continue
+                                          with z.open(entry) as stream:
+                                              suspect+=int(check_stream(stream,MAX_BYTES))
+                                          if entry.filename.lower().endswith(('.zip','.7z','.rar','.tar','.gz')):
+                                              incomplete+=1
+                      except (OSError, ValueError, zipfile.BadZipFile, RuntimeError):
+                          incomplete+=1
+                  for f in dest.iterdir():
+                      if f.is_file(): f.unlink()
+                  dest.rmdir()
+                  audited+=1
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a',encoding='utf-8') as report:
+              report.write('## Historical release asset audit (static only)\\n\\n')
+              report.write(f'Releases reviewed: **{audited}**\\n\\n')
+              report.write(f'Assets inventoried: **{asset_count}**\\n\\n')
+              report.write(f'Archive entries scanned: **{zip_entries}**\\n\\n')
+              report.write(f'Possible credential-pattern matches: **{suspect}**\\n\\n')
+              report.write(f'Uninspected or incomplete items: **{incomplete}**\\n\\n')
+              report.write('**Limits:** Does not execute installers, decode embedded executable resources, verify antivirus reputation or signature, inspect Git LFS, inspect non-ZIP compressed installer internals, or establish full binary safety. No matched values or file contents are output.\\n')
+          print('Sanitized historical release check complete. See step summary.')
+          sys.exit(1 if suspect or incomplete else 0)
+          PY
