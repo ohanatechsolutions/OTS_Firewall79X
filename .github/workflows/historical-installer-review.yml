@@ -61,9 +61,14 @@ jobs:
               data = subprocess.run(['git','cat-file','blob',sha],check=True,capture_output=True).stdout
               inspected += 1
               if path.lower().endswith('.exe'):
-                  if (data.startswith(b'version https://git-lfs.github.com/spec/v1\n')
-                      and re.search(rb'(?m)^oid sha256:[a-f0-9]{64}
-                      findings.append((path,'invalid-MZ-header'))
+                  if (data.startswith(b'version https://git-lfs.github.com/spec/v1')
+                      and re.search(rb'(?m)^oid sha256:[a-f0-9]{64}$', data)
+                      and re.search(rb'(?m)^size [0-9]+$', data)):
+                      lfs_pointers += 1
+                  else:
+                      exe_count += 1
+                      if not data.startswith(b'MZ') or len(data) < 64:
+                          findings.append((path,'invalid-MZ-header'))
                       else:
                           pointer = int.from_bytes(data[0x3c:0x40], 'little')
                           if pointer + 4 > len(data) or data[pointer:pointer+4] != b'PE\x00\x00':
