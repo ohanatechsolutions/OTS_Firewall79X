@@ -76,6 +76,18 @@ jobs:
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
               summary.write(f'Gitleaks potential secret findings: **{len(data)}**\n\n')
               summary.write('No secret values, matching source lines, or raw scanner reports are uploaded.\n\n')
+              # Metadata-only triage; never emit secret, match, entropy or source lines.
+              def safe(value):
+                  return ''.join(c if (c.isalnum() or c in '/._-') else '_' for c in str(value))[:240]
+              for item in data:
+                  summary.write(
+                      '- Rule: ' + safe(item.get('RuleID', 'unknown'))
+                      + '; file: ' + safe(item.get('File', 'unknown'))
+                      + '; commit: ' + safe(item.get('Commit', 'unknown'))
+                      + '; line: ' + safe(item.get('StartLine', 'unknown')) + '\n'
+                  )
+              if data:
+                  summary.write('\n')
               summary.write('**This check does not inspect Git LFS payloads, executable internals, Actions logs, or older Release assets.**\n')
           print('Secret-pattern audit completed; inspect the sanitized step summary for the finding count.')
           PY
