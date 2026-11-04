@@ -30,7 +30,7 @@ jobs:
               re.compile(rb'(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}'),
               re.compile(rb'(?:sk_live|rk_live)_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}',re.I),
               re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----',re.I),
-              re.compile(rb'(?:postgres(?:ql)?|mongodb(?:\\+srv)?|mysql|redis)://[^\\s:@/]+:[^\\s@/]+@',re.I),
+              re.compile(rb'(?:postgres(?:ql)?|mongodb(?:\+srv)?|mysql|redis)://[^\s:@/]+:[^\s@/]+@',re.I),
           ]
           MAX_BYTES=350*1024*1024
           MAX_ZIP_UNPACK=1024*1024*1024
@@ -105,13 +105,13 @@ jobs:
                   dest.rmdir()
                   audited+=1
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a',encoding='utf-8') as report:
-              report.write('## Historical release asset audit (static only)\\n\\n')
-              report.write(f'Releases reviewed: **{audited}**\\n\\n')
-              report.write(f'Assets inventoried: **{asset_count}**\\n\\n')
-              report.write(f'Archive entries scanned: **{zip_entries}**\\n\\n')
-              report.write(f'Possible credential-pattern matches: **{suspect}**\\n\\n')
-              report.write(f'Uninspected or incomplete items: **{incomplete}**\\n\\n')
-              report.write('**Limits:** Does not execute installers, decode embedded executable resources, verify antivirus reputation or signature, inspect Git LFS, inspect non-ZIP compressed installer internals, or establish full binary safety. No matched values or file contents are output.\\n')
+              report.write('## Historical release asset audit (static only)\n\n')
+              report.write(f'Releases reviewed: **{audited}**\n\n')
+              report.write(f'Assets inventoried: **{asset_count}**\n\n')
+              report.write(f'Archive entries scanned: **{zip_entries}**\n\n')
+              report.write(f'Possible credential-pattern matches: **{suspect}**\n\n')
+              report.write(f'Uninspected or incomplete items: **{incomplete}**\n\n')
+              report.write('**Limits:** Does not execute installers, decode embedded executable resources, verify antivirus reputation or signature, inspect Git LFS, inspect non-ZIP compressed installer internals, or establish full binary safety. No matched values or file contents are output.\n')
           print('Sanitized historical release check complete. See step summary.')
           sys.exit(1 if suspect or incomplete else 0)
           PY
