@@ -52,6 +52,7 @@ jobs:
           skipped = []
           inspected = 0
           exe_count = 0
+          lfs_pointers = 0
           for sha, path in sorted(binaries.items(), key=lambda v:v[1]):
               size = int(subprocess.run(['git','cat-file','-s',sha],check=True,capture_output=True,text=True).stdout.strip())
               if size > MAX_BYTES:
@@ -60,8 +61,63 @@ jobs:
               data = subprocess.run(['git','cat-file','blob',sha],check=True,capture_output=True).stdout
               inspected += 1
               if path.lower().endswith('.exe'):
-                  exe_count += 1
-                  if not data.startswith(b'MZ') or len(data) < 64:
+                  if (data.startswith(b'version https://git-lfs.github.com/spec/v1\n')
+                      and re.search(rb'(?m)^oid sha256:[a-f0-9]{64}
+                      findings.append((path,'invalid-MZ-header'))
+                      else:
+                          pointer = int.from_bytes(data[0x3c:0x40], 'little')
+                          if pointer + 4 > len(data) or data[pointer:pointer+4] != b'PE\x00\x00':
+                              findings.append((path,'invalid-PE-header'))
+              variants = (data, data[::2], data[1::2])
+              if any(pattern.search(variant) for pattern in patterns for variant in variants):
+                  findings.append((path,'possible-credential-pattern'))
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a',encoding='utf-8') as f:
+              f.write('## Historical binary exposure check (static, not a malware scan)\n\n')
+              f.write(f'Unique historical binary blobs found: **{len(binaries)}**\n\n')
+              f.write(f'Binary blobs examined: **{inspected}**\n\n')
+              f.write(f'EXE blobs with PE-header checks: **{exe_count}**\n\n')
+              f.write(f'Historical Git LFS pointer blobs (not executable bytes): **{lfs_pointers}**\n\n')
+              f.write(f'Potential findings: **{len(findings)}**\n\n')
+              for path,rule in findings:
+                  safe=''.join(c if c.isalnum() or c in '/._-' else '_' for c in path)[:200]
+                  f.write(f'- Path: `{safe}`; reason: `{rule}`\n')
+              f.write(f'Files skipped because of size: **{len(skipped)}**\n\n')
+              f.write('Git LFS pointers are metadata, not executable payloads. Their underlying objects are not scanned by this workflow.\n\n')
+              f.write('**Limits:** Checks recognizable patterns in raw bytes and UTF-16-like text, not compressed installer payloads, antivirus reputation, code signing, LFS bytes, logs or deleted Git refs. A zero count is not a guarantee of safety.\n')
+          print('Sanitized binary metadata audit complete. See the job summary.')
+          if findings or skipped:
+              sys.exit(1)
+          PY
+, data)
+                      and re.search(rb'(?m)^size [0-9]+
+                      findings.append((path,'invalid-MZ-header'))
+                  else:
+                      pointer = int.from_bytes(data[0x3c:0x40], 'little')
+                      if pointer + 4 > len(data) or data[pointer:pointer+4] != b'PE\x00\x00':
+                          findings.append((path,'invalid-PE-header'))
+              variants = (data, data[::2], data[1::2])
+              if any(pattern.search(variant) for pattern in patterns for variant in variants):
+                  findings.append((path,'possible-credential-pattern'))
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a',encoding='utf-8') as f:
+              f.write('## Historical binary exposure check (static, not a malware scan)\n\n')
+              f.write(f'Unique historical binary blobs found: **{len(binaries)}**\n\n')
+              f.write(f'Binary blobs examined: **{inspected}**\n\n')
+              f.write(f'EXE blobs with PE-header checks: **{exe_count}**\n\n')
+              f.write(f'Potential findings: **{len(findings)}**\n\n')
+              for path,rule in findings:
+                  safe=''.join(c if c.isalnum() or c in '/._-' else '_' for c in path)[:200]
+                  f.write(f'- Path: `{safe}`; reason: `{rule}`\n')
+              f.write(f'Files skipped because of size: **{len(skipped)}**\n\n')
+              f.write('**Limits:** Checks recognizable patterns in raw bytes and UTF-16-like text, not compressed installer payloads, antivirus reputation, code signing, LFS bytes, logs or deleted Git refs. A zero count is not a guarantee of safety.\n')
+          print('Sanitized binary metadata audit complete. See the job summary.')
+          if findings or skipped:
+              sys.exit(1)
+          PY
+, data)):
+                      lfs_pointers += 1
+                  else:
+                      exe_count += 1
+                      if not data.startswith(b'MZ') or len(data) < 64:
                       findings.append((path,'invalid-MZ-header'))
                   else:
                       pointer = int.from_bytes(data[0x3c:0x40], 'little')
