@@ -1,0 +1,87 @@
+name: Historical installer exposure check (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ots-historical-binaries-review
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fetch complete reachable Git history without executing installers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          lfs: false
+          persist-credentials: false
+      - name: Examine historical binary blobs without executing them or printing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+          from pathlib import Path
+
+          MAX_BYTES = 120 * 1024 * 1024
+          extensions = ('.exe', '.dll', '.zip', '.7z', '.pfx', '.p12', '.pem', '.key')
+          patterns = [
+              re.compile(rb'gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}', re.I),
+              re.compile(rb'(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}'),
+              re.compile(rb'(?:sk_live|rk_live)_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}', re.I),
+              re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----', re.I),
+              re.compile(rb'(?:postgres(?:ql)?|mongodb(?:\+srv)?|mysql|redis)://[^\s:@/]+:[^\s@/]+@', re.I),
+          ]
+          objects = subprocess.run(
+              ['git','rev-list','--objects','--all'],
+              check=True, capture_output=True
+          ).stdout.splitlines()
+          binaries = {}
+          for entry in objects:
+              sha, _, path = entry.partition(b' ')
+              if path and path.lower().endswith(tuple(x.encode() for x in extensions)):
+                  binaries.setdefault(sha.decode('ascii'), path.decode('utf-8','replace'))
+          findings = []
+          skipped = []
+          inspected = 0
+          exe_count = 0
+          for sha, path in sorted(binaries.items(), key=lambda v:v[1]):
+              size = int(subprocess.run(['git','cat-file','-s',sha],check=True,capture_output=True,text=True).stdout.strip())
+              if size > MAX_BYTES:
+                  skipped.append(path)
+                  continue
+              data = subprocess.run(['git','cat-file','blob',sha],check=True,capture_output=True).stdout
+              inspected += 1
+              if path.lower().endswith('.exe'):
+                  exe_count += 1
+                  if not data.startswith(b'MZ') or len(data) < 64:
+                      findings.append((path,'invalid-MZ-header'))
+                  else:
+                      pointer = int.from_bytes(data[0x3c:0x40], 'little')
+                      if pointer + 4 > len(data) or data[pointer:pointer+4] != b'PE\x00\x00':
+                          findings.append((path,'invalid-PE-header'))
+              variants = (data, data[::2], data[1::2])
+              if any(pattern.search(variant) for pattern in patterns for variant in variants):
+                  findings.append((path,'possible-credential-pattern'))
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a',encoding='utf-8') as f:
+              f.write('## Historical binary exposure check (static, not a malware scan)\n\n')
+              f.write(f'Unique historical binary blobs found: **{len(binaries)}**\n\n')
+              f.write(f'Binary blobs examined: **{inspected}**\n\n')
+              f.write(f'EXE blobs with PE-header checks: **{exe_count}**\n\n')
+              f.write(f'Potential findings: **{len(findings)}**\n\n')
+              for path,rule in findings:
+                  safe=''.join(c if c.isalnum() or c in '/._-' else '_' for c in path)[:200]
+                  f.write(f'- Path: `{safe}`; reason: `{rule}`\n')
+              f.write(f'Files skipped because of size: **{len(skipped)}**\n\n')
+              f.write('**Limits:** Checks recognizable patterns in raw bytes and UTF-16-like text, not compressed installer payloads, antivirus reputation, code signing, LFS bytes, logs or deleted Git refs. A zero count is not a guarantee of safety.\n')
+          print('Sanitized binary metadata audit complete. See the job summary.')
+          if findings or skipped:
+              sys.exit(1)
+          PY
