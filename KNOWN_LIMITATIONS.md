@@ -51,3 +51,9 @@ Section I introduces a public HTTPS URLhaus-derived domain list, bounded backgro
 - **79:** Periodicity analysis observes only recurring TCP connections sampled by the service, not all network traffic or UDP. Familiar periodic processes are suppressed to reduce false positives but may conceal compromised software; jitter can evade the heuristic.
 
 Windows Server 2025 CI builds, installer, upgrade, rollback and uninstallation tests do not establish real Windows 10/11 hardware qualification or guarantee security efficacy.
+
+## November 13, 2026 security-hardening update
+
+The DNS rebinding observation now treats mixed public/non-public DNS responses and special-use address destinations as potentially suspicious *after* an observed public-only baseline. It remains a warning-only sensor dependent on Windows DNS events; it cannot prevent browser/DNS rebinding or observe encrypted DNS traffic. The encrypted off-device log export refuses symbolic-link/junction directory ancestors and linked existing delivery receipts to reduce false off-device delivery claims. This is a best-effort user-space check, not a guarantee against concurrent filesystem swaps by an administrator. Physical Windows 10/11 and UNC/removable-volume qualification remains outstanding.
+
+Manual preview publication now depends on a full-history Gitleaks scan using the reusable publication-security workflow. Earlier scans reported unresolved potential findings; these must be investigated, not silenced. The scan cannot attest Git LFS payloads, binary internals or old Release assets.

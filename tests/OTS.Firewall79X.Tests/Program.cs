@@ -846,6 +846,49 @@ Test("IPv4/IPv6 packet parser fails closed on malformed headers, not truncated c
     fragmented[42]=0;fragmented[43]=2;
     Assert(IpPacketValidator.Inspect(fragmented).Status==IpPacketValidator.Verdict.Malformed);
 });
+Test("DNS rebinding recognizes mixed answers and special-use destinations",()=>{
+    var now=DateTimeOffset.UtcNow;
+    var d=new DnsRebindingDetector();
+    Assert(DnsRebindingDetector.IsLocal(System.Net.IPAddress.Parse("100.64.1.2")));
+    Assert(DnsRebindingDetector.IsLocal(System.Net.IPAddress.Parse("2001:db8::1")));
+    Assert(!DnsRebindingDetector.IsLocal(System.Net.IPAddress.Parse("8.8.8.8")));
+    Assert(!d.Observe("mixed.example.org","8.8.8.8;10.0.0.1","0",now).SuspiciousTransition);
+    Assert(!d.Observe("mixed.example.org","10.0.0.1","0",now.AddSeconds(1)).SuspiciousTransition,
+        "An initial mixed response must not create a public-only baseline");
+    d.Observe("mixed.example.org","8.8.8.8","0",now.AddSeconds(2));
+    Assert(d.Observe("mixed.example.org","8.8.8.8;10.0.0.1","0",now.AddSeconds(3)).SuspiciousTransition);
+    Assert(!d.Observe("mixed.example.org","8.8.8.8;10.0.0.1","0",now.AddSeconds(4)).SuspiciousTransition,
+        "Repeated mixed results must honor alert cooldown");
+    var special=new DnsRebindingDetector();
+    special.Observe("special.example.org","9.9.9.9","0",now);
+    Assert(special.Observe("special.example.org","100.64.0.1","0",now.AddSeconds(1)).SuspiciousTransition);
+    Assert(!special.Observe("bad_name.example.org","9.9.9.9","0",now).ParsedAddressAnswer);
+    Assert(!special.Observe("many.example.org",string.Join(';',Enumerable.Repeat("8.8.8.8",65)),"0",now).ParsedAddressAnswer,
+        "More than 64 answers must not be silently truncated");
+});
+Test("Encrypted evidence exporter refuses linked destination paths and receipts",()=>{
+    var root=Path.GetDirectoryName(Temp())!;
+    var queue=Path.Combine(root,"queue");
+    var receiver=Path.Combine(root,"receiver");
+    Directory.CreateDirectory(receiver);
+    var log=Path.Combine(root,"events.jsonl");
+    File.WriteAllText(log,"encrypted evidence fixture");
+    var encrypted=OffDeviceLogExport.Enqueue(queue,log,"recovery-passphrase-test");
+    var link=Path.Combine(root,"receiver-link");
+    try
+    {
+        Directory.CreateSymbolicLink(link,receiver);
+    }
+    catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+    {
+        return; // Windows without symlink privilege; ordinary copy/receipt tests still run.
+    }
+    Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(encrypted,link));
+    var receipt=Path.Combine(receiver,Path.GetFileName(encrypted));
+    File.CreateSymbolicLink(receipt,encrypted);
+    Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(encrypted,receiver));
+    Assert(File.Exists(encrypted),"Rejecting a linked receipt must never discard queued evidence");
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 

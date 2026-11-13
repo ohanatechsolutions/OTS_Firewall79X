@@ -6,12 +6,27 @@ namespace OTS.Firewall79X.Core;
 // No plaintext event logs are copied off the machine and no external account is required.
 public static class OffDeviceLogExport
 {
+    // Reject junctions and symbolic links in protected source, queue and destination
+    // directory ancestors. A checksum alone cannot prove an off-device receipt if
+    // an attacker points the destination back at local storage.
+    private static void RejectLinkedDirectories(string folder)
+    {
+        for (DirectoryInfo? directory = new DirectoryInfo(Path.GetFullPath(folder));
+             directory != null; directory = directory.Parent)
+        {
+            if (directory.Exists && (directory.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Linked directory rejected for protected log export");
+        }
+    }
     public static string Enqueue(string queueDirectory, string sourceLog, string recoveryPassphrase)
     {
         var info = new FileInfo(sourceLog);
         if (!info.Exists || info.Length > 16 * 1024 * 1024) throw new InvalidDataException("Unsupported log source size");
         if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new IOException("Linked log source rejected");
+        RejectLinkedDirectories(Path.GetDirectoryName(info.FullName)!);
+        RejectLinkedDirectories(queueDirectory);
         Directory.CreateDirectory(queueDirectory);
+        RejectLinkedDirectories(queueDirectory);
         var plain = File.ReadAllBytes(sourceLog);
         var target = Path.Combine(queueDirectory, $"log-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.otslog");
         string partial = target + ".partial";
@@ -42,6 +57,7 @@ public static class OffDeviceLogExport
             var full = Path.GetFullPath(folder);
             var root = Path.GetPathRoot(full);
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(full)) return false;
+            RejectLinkedDirectories(full);
             var drive = new DriveInfo(root);
             return drive.IsReady && drive.DriveType is DriveType.Network or DriveType.Removable;
         }
@@ -61,7 +77,9 @@ public static class OffDeviceLogExport
     public static string CopyAndVerify(string encryptedQueueFile, string destinationDirectory)
     {
         if (!Directory.Exists(destinationDirectory)) throw new DirectoryNotFoundException(destinationDirectory);
+        RejectLinkedDirectories(destinationDirectory);
         var source = new FileInfo(encryptedQueueFile);
+        RejectLinkedDirectories(Path.GetDirectoryName(source.FullName)!);
         if (!source.Exists || source.Length < 48 || source.Length > 64 * 1024 * 1024 + 48 ||
             !source.Name.EndsWith(".otslog", StringComparison.OrdinalIgnoreCase) ||
             source.Attributes.HasFlag(FileAttributes.ReparsePoint))
@@ -69,6 +87,8 @@ public static class OffDeviceLogExport
         var target = Path.Combine(destinationDirectory, source.Name);
         if (File.Exists(target))
         {
+            if ((File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Linked remote delivery receipt rejected");
             // Delivery may have succeeded before the client crashed prior to deleting its queue
             // entry. Accept an EXACT byte-identical remote receipt, never overwrite a mismatch.
             using var existing = File.OpenRead(target);
@@ -100,6 +120,7 @@ public static class OffDeviceLogExport
     {
         if (!IsOffDeviceDestination(externalFolder)) throw new IOException("Off-device destination unavailable");
         if (!Directory.Exists(queueDirectory)) return 0;
+        RejectLinkedDirectories(queueDirectory);
         int shipped = 0;
         foreach (var file in Directory.EnumerateFiles(queueDirectory, "*.otslog").Order().Take(16))
         {

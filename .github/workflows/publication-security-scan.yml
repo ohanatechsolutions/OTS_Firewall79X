@@ -1,6 +1,7 @@
 name: Publication security scan (manual)
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 permissions:

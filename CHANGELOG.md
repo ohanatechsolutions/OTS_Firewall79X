@@ -9,3 +9,10 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Dark slate desktop workspace with rounded cards, keyboard focus states, shield status, searchable layers, and live security activity tiles.
 - Supplied Ohana firewall PNG in the interface and ICO in the executable, installer, window, shortcuts and notification area.
 - Windows UI capture harness renders all seven tabs and compact layout; protection scope is unchanged.
+
+## 2026-11-13 — source hardening (development preview)
+
+- Expanded DNS rebinding observation to cover mixed public/private answers, special-use addresses and strict host/answer parsing; still no packet interception.
+- Hardened off-device encrypted-log export against linked directory ancestors and symlink delivery receipts; added regression coverage.
+- Made the manual release workflow depend on the historical secret-pattern check; a finding blocks publication rather than bypassing the security gate.
+- Added an owner-only release handoff checklist; no production certification claimed.

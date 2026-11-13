@@ -62,11 +62,17 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  publication-audit:
+    # Manual publishing must prove that the entire reachable source history
+    # passed the existing sanitized secret-pattern scan. Findings fail closed.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/publication-security-scan.yml
+
   development-release:
     # Never upload large installers to Git LFS automatically.
     # Only an authorized, explicit manual run publishes a GitHub prerelease.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-    needs: windows
+    needs: [windows, publication-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
