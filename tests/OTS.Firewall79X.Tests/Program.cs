@@ -199,6 +199,53 @@ Test("Encrypted folder backup preserves empty nested directories and remains non
     Assert(File.ReadAllText(Path.Combine(restore,"has-file","document.txt"))=="content preserved");
     Throws<IOException>(()=>FolderBackup.Restore(archive,restore,"twelve-chars-or-more"));
 });
+Test("Legacy file-only encrypted backup restores with the expanded directory schema",()=>{
+    var root=Path.GetDirectoryName(Temp())!;
+    Directory.CreateDirectory(root);
+    var data=System.Text.Encoding.UTF8.GetBytes("legacy archive contents");
+    byte[] zipBytes;
+    using(var buffer=new MemoryStream())
+    {
+        using(var zip=new System.IO.Compression.ZipArchive(buffer,System.IO.Compression.ZipArchiveMode.Create,true))
+        {
+            using(var file=zip.CreateEntry("files/legacy.txt").Open())file.Write(data);
+            var manifestData=JsonSerializer.Serialize(new[]{
+                new {Path="legacy.txt",Length=(long)data.Length,
+                    Sha256=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)),
+                    LastWriteUtcTicks=(long?)null}});
+            using(var writer=new StreamWriter(zip.CreateEntry("manifest.json").Open()))
+                writer.Write(manifestData);
+        }
+        zipBytes=buffer.ToArray();
+    }
+    var archive=Path.Combine(root,"legacy.otsfolder");
+    SecureArchive.Encrypt(archive,zipBytes,"twelve-chars-or-more");
+    var restored=Path.Combine(root,"legacy-restored");
+    var summary=FolderBackup.Restore(archive,restored,"twelve-chars-or-more");
+    Assert(summary.Files==1&&summary.Bytes==data.Length);
+    Assert(File.ReadAllText(Path.Combine(restored,"legacy.txt"))=="legacy archive contents");
+});
+Test("Encrypted backup directory markers reject path traversal",()=>{
+    var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
+    byte[] zipBytes;
+    using(var buffer=new MemoryStream())
+    {
+        using(var zip=new System.IO.Compression.ZipArchive(buffer,System.IO.Compression.ZipArchiveMode.Create,true))
+        {
+            zip.CreateEntry("directories/../escape/");
+            var digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Array.Empty<byte>()));
+            var manifestData=JsonSerializer.Serialize(new[]{
+                new {Path="../escape",Length=0L,Sha256=digest,
+                    LastWriteUtcTicks=(long?)null,IsDirectory=true}});
+            using(var writer=new StreamWriter(zip.CreateEntry("manifest.json").Open()))
+                writer.Write(manifestData);
+        }
+        zipBytes=buffer.ToArray();
+    }
+    var archive=Path.Combine(root,"hostile.otsfolder");
+    SecureArchive.Encrypt(archive,zipBytes,"twelve-chars-or-more");
+    Throws<InvalidDataException>(()=>FolderBackup.Verify(archive,"twelve-chars-or-more"));
+});
 Test("Folder backup rejects destination inside source",()=>{var source=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(source);Throws<IOException>(()=>FolderBackup.Create(source,Path.Combine(source,"self.otsfolder"),"twelve-chars-or-more"));});
 Test("Folder backup rejects path traversal before writing outside restore",()=>{var parent=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(parent);using var bytes=new MemoryStream();using(var zip=new System.IO.Compression.ZipArchive(bytes,System.IO.Compression.ZipArchiveMode.Create,true)){using(var writer=new StreamWriter(zip.CreateEntry("manifest.json").Open()))writer.Write("[{\"Path\":\"../outside.txt\",\"Length\":0,\"Sha256\":\"x\"}]");zip.CreateEntry("files/../outside.txt");}var archive=Path.Combine(parent,"bad.otsfolder");SecureArchive.Encrypt(archive,bytes.ToArray(),"twelve-chars-or-more");Throws<InvalidDataException>(()=>FolderBackup.Restore(archive,Path.Combine(parent,"restored"),"twelve-chars-or-more"));Assert(!File.Exists(Path.Combine(parent,"outside.txt")));Assert(!Directory.Exists(Path.Combine(parent,"restored")));});
 Test("Repeated protection cycles retain bounded recoverable journal",()=>{var path=Temp();var store=new FakeStore("original");var journal=new ChangeJournal(path,store);for(int i=0;i<300;i++){journal.Apply("setting","ours");journal.Restore();}Assert(journal.Entries.Count<=256);var reopened=new ChangeJournal(path,store);reopened.Apply("setting","ours");reopened.Restore();Assert(store.Value=="original");});
