@@ -1,5 +1,8 @@
 # Release owner actions — OTS Firewall79X
 
+> **Owner's sequencing requirement (November 13, 2026):** Do not request the owner's hands-on testing or install this preview on the owner's laptop yet. Engineering must first implement all 79 original mechanisms and pass internal preflight. The hardware checks and external trust approvals below become owner steps **after** engineering reaches code-complete; they are not a request to test the current build. See [remaining engineering](REMAINING_LAYER_ENGINEERING.md).
+
+
 **Status: incomplete development preview. Do not advertise the suite as 79 production-certified protections.**
 
 All ordinary application implementation, unit testing, packaging and GitHub workflow development remain engineering responsibilities. The following items genuinely require physical access, outside authority, or identities that should not be transferred to ChatGPT.

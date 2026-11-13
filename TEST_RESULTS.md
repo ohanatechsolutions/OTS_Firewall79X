@@ -1,5 +1,15 @@
 # Test status
 
+## Latest fully verified main-branch code — November 13, 2026
+
+**PASS, code commit `4f681112d4c2c056e804cd20d2a0c6204da51225`:** [Windows Server 2025 CI run 43426807917](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43426807917).
+
+- **122/122 core tests passed**, including a complete 79-ID catalog/specification parity check, signed-stage unexpected payload detection, feed timestamp rollback tests, RDP threshold timing, restart-persistent file integrity, interrupted authenticated event-log rotation, encrypted archive no-overwrite, and bounded beacon attribution.
+- **PASS:** native app/service/recovery compilation, installed-service and UI tests, clean install, ON/OFF/restore, watchdog, privilege boundary, in-place upgrade and uninstall, dependency vulnerability inventory, real EXE/ZIP/sha256 packaging.
+- **Compiled unsigned installer** in this specific CI artifact: **118,235,246 bytes**, SHA-256 `ffd59ef35da8b393fb8108923da4a7c3a617aa6d450477303802c33252984ba4`. It is an integrity digest for this specific build only, not publisher authentication.
+- **Production still blocked** by missing 79-layer implementation/acceptance, untrusted feed publisher identity and software code signing, unreviewed historical secret findings, and missing physical Windows 10/11/Windows 11 Home tests. No new GitHub Release was published.
+
+
 ## Latest verified CI evidence — November 13, 2026
 
 **PASS: commit `5f4a4d2f3c7bb9638a0d2f20f8e42c1a7c6e2a3e`** on Windows Server 2025 CI: [Windows build and installation verification, run 43419857452](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43419857452).

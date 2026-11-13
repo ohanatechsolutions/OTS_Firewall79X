@@ -1,5 +1,14 @@
 # 79-layer requirement coverage
 
+## Current verified engineering milestone — November 13, 2026
+
+[Windows CI run 43426807917](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43426807917) passed **122/122 core regression tests**, build, installed-service smoke, upgrade/uninstall, dependency gate and installer ZIP/PE integrity checks for code commit `4f681112d4c2c056e804cd20d2a0c6204da51225`.
+
+Additional actual code improvements after the previous 114-test milestone: **35** restart-persistent protected binary SHA-256 observations; **41** independent high-confidence RDP restriction logic and safe clock recovery; **57** exact signed staging inventory checks; **61** interrupted compressed-log recovery; **63** per-feed timestamp anti-replay state; **68** atomic no-overwrite encrypted archive commits; **79** bounded selective beacon history recovery and process attribution. A build script now checks exact original-spec/catalog/coverage parity and disallows production when any row lacks full acceptance.
+
+**No layer has become independently full-spec certified by this update.** The current matrix still has eight explicitly incomplete layer rows (4, 8, 10, 31, 34, 38, 57, 63), with all remaining rows partial or restricted by limitations/untested hardware. Owner-performed testing is deferred per explicit owner instruction. See [remaining implementation and acceptance](docs/REMAINING_LAYER_ENGINEERING.md).
+
+
 ## Verified development improvements — November 13, 2026
 
 The [successful Windows CI run 43419857452](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43419857452) passed **114/114 core regressions**, Windows integration smoke tests and installer/ZIP checks for commit `5f4a4d2`. Narrow improvements include:
