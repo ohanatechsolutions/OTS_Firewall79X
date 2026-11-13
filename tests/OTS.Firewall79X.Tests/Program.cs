@@ -531,7 +531,6 @@ Test("Log rotation recovers pending segments and refuses mismatched duplicate gz
     Assert(EventLogRotation.SelectVerifiedSegments(dir).SequenceEqual(new[]{pending}));
     EventLogRotation.FinalizePending(dir);
     Assert(!File.Exists(pending));
-    var gz=Path.ChangeExtension(pending[..^".pending".Length],"gz");
     // Directory recovery now has one gzip segment.
     Assert(EventLogRotation.SelectVerifiedSegments(dir).Count==1);
     // A simulated crash after gzip commit leaves an identical source alongside
