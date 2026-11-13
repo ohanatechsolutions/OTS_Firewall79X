@@ -160,9 +160,16 @@ public static class BeaconAnalysis
 {
     private static readonly HashSet<string> CommonBackground = new(StringComparer.OrdinalIgnoreCase)
     { "svchost", "system", "msedge", "chrome", "firefox", "onedrive", "teams", "outlook", "searchhost" };
+    private static readonly HashSet<string> Unattributed = new(StringComparer.OrdinalIgnoreCase)
+    { "", "unavailable", "exited", "access restricted" };
+    public static bool HasAttribution(int pid, string? process) =>
+        pid > 0 && !Unattributed.Contains(Path.GetFileNameWithoutExtension(process??""));
+
     public static bool Suspicious(string process, IReadOnlyList<DateTimeOffset> times)
     {
-        if (CommonBackground.Contains(process) || times.Count < 9) return false;
+        var executable=Path.GetFileNameWithoutExtension(process??"");
+        if (Unattributed.Contains(executable) || CommonBackground.Contains(executable) ||
+            times.Count < 9) return false;
         var samples = times.TakeLast(16).ToArray();
         var gaps = samples.Zip(samples.Skip(1), (a, b) => (b-a).TotalSeconds).ToArray();
         if (gaps.Any(g => g <= 0)) return false;

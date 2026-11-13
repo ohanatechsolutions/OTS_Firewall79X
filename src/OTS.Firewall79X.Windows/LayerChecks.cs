@@ -52,10 +52,26 @@ public sealed class LayerChecks : IDisposable
         foreach(var c in Connections.Where(c=>c.State=="Established"&&!previousConnections.Contains($"{c.Pid}:{c.Remote}")))
         {
             string key=$"{c.Pid}:{c.Process}:{c.Remote}";events.Add(16,"Info","New observed connection",key);
-            if(connectionsHistory.Count>4096)connectionsHistory.Clear();
-            if(!connectionsHistory.TryGetValue(key,out var history))connectionsHistory[key]=history=[];
-            history.Add(now);history.RemoveAll(t=>t<now.AddHours(-12));if(history.Count>32)history.RemoveAt(0);
-            if(BeaconAnalysis.Suspicious(c.Process,history))events.Add(79,"Warning","Possible regular outbound beacon",$"{key}; {history.Count} observed reconnections; timing is suggestive, not a malicious verdict");
+            if(BeaconAnalysis.HasAttribution(c.Pid,c.Process))
+            {
+                if(connectionsHistory.Count>=4096&&!connectionsHistory.ContainsKey(key))
+                {
+                    foreach(var stale in connectionsHistory.Where(x=>x.Value.Count==0 ||
+                        x.Value[^1]<now.AddHours(-12)).Select(x=>x.Key).ToArray())
+                        connectionsHistory.Remove(stale);
+                    if(connectionsHistory.Count>=4096)
+                    {
+                        var oldest=connectionsHistory.MinBy(x=>x.Value.Count==0
+                            ?DateTimeOffset.MinValue:x.Value[^1]).Key;
+                        connectionsHistory.Remove(oldest);
+                    }
+                }
+                if(!connectionsHistory.TryGetValue(key,out var history))connectionsHistory[key]=history=[];
+                history.Add(now);history.RemoveAll(t=>t<now.AddHours(-12));if(history.Count>32)history.RemoveAt(0);
+                if(BeaconAnalysis.Suspicious(c.Process,history))
+                    events.Add(79,"Warning","Possible regular outbound beacon",
+                        $"{key}; {history.Count} observed reconnections; timing is suggestive, not a malicious verdict");
+            }
             var remote=TrafficRules.ParseEndpoint(c.Remote);
             if(remote!=null&&TrafficRules.SuspiciousMailClient(c.Process,remote.Port))
                 events.Add(22,"Warning","Unusual outbound SMTP connection",
@@ -541,7 +557,7 @@ public sealed class LayerChecks : IDisposable
             case 76:return HostMonitor?.Check(76)??Missing(id,"Background Defender file monitor is not started");
             case 77:return HostMonitor?.Check(77)??Missing(id,"USB device notifications are not started");
             case 78:return HostMonitor?.Check(78)??Missing(id,"Background file-change monitor is not started");
-            case 79:return NetworkError==null?Good(id,$"{connectionsHistory.Count} process/destination reconnection histories; repeated TCP connection starts analyzed with benign-process suppression",LayerMode.Monitoring,"Bounded 30/90-second TCP sampling misses many short connections and UDP; heuristic requires 9 observations, 8 minutes of timing and <12% variation. A regular interval is not proof of compromise."):Missing(id,NetworkError);
+            case 79:return NetworkError==null?Good(id,$"{connectionsHistory.Count} attributable process/destination reconnection histories; 4,096-key bounded selective eviction and benign-process suppression",LayerMode.Monitoring,"Bounded 30/90-second TCP sampling misses many short connections and UDP; public and private destinations may still produce false positives. A regular interval is not proof of compromise."):Missing(id,NetworkError);
             default:return Missing(id,"Runtime component has not supplied health evidence");
         }
     }

@@ -104,3 +104,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Layer 61 rotation now atomically renames the active log into a pending source, builds and verifies a gzip archive, and commits the compressed segment before deleting the pending source. Startup selects valid pending/gzip pairs once, preserving one authoritative chain and rejecting mismatched duplicates.
 - Finalizes recoverable pending rotations only after full HMAC-chain/schema verification. Uses high-resolution sortable archive timestamps, bounded segment validation and exact owned-file retention patterns.
 - Added synthetic normal, interrupted, duplicate and tamper tests. Physical abrupt-power-loss and disk-full fault-injection acceptance remain outstanding.
+
+## 2026-11-13 — bounded beacon detector history and reliable process attribution
+
+- Layer 79 ignores process names supplied by Windows as unavailable/exited/access-restricted, normalizes executable names for expected-background exclusions, and selectively evicts stale/oldest histories instead of wiping all 4,096 entries on saturation.
+- Retains monitoring of both public and internal TCP destinations; no new assumptions that private-network beacons are always benign. Short-lived TCP, UDP, background traffic and attribution races remain unverified.
+- Added classification regression checks for PID zero, access-restricted names and known background executables.

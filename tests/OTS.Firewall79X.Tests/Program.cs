@@ -773,6 +773,17 @@ Test("Beacon detector demands sufficient regularity and suppresses expected back
     Assert(!BeaconAnalysis.Suspicious("unknown-app",Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*i*65)).ToArray()));
     Assert(!BeaconAnalysis.Suspicious("unknown-app",Enumerable.Range(0,14).Select(i=>now.AddSeconds(i*10)).ToArray()));
 });
+Test("Beacon monitoring excludes unattributable processes and normalizes executable names",()=>{
+    var now=DateTimeOffset.UtcNow;
+    var periodic=Enumerable.Range(0,14).Select(i=>now.AddMinutes(i)).ToArray();
+    Assert(BeaconAnalysis.HasAttribution(1234,"unknown-app"));
+    Assert(!BeaconAnalysis.HasAttribution(0,"unknown-app"));
+    Assert(!BeaconAnalysis.HasAttribution(1234,"Access restricted"));
+    Assert(!BeaconAnalysis.HasAttribution(1234,"Exited"));
+    Assert(!BeaconAnalysis.Suspicious("Access restricted",periodic));
+    Assert(!BeaconAnalysis.Suspicious("svchost.exe",periodic));
+    Assert(BeaconAnalysis.Suspicious("unknown-app",periodic));
+});
 Test("Section G: exact owned-rule identities never delete drifted or lookalike policies",()=>{
     const string prefix=OwnedFirewallRule.InboundPrefix;
     const string intel=OwnedFirewallRule.IntelligencePrefix;
