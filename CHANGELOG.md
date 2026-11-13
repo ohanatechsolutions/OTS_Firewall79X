@@ -80,3 +80,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Fixed event-handler gating that accidentally nested the high-confidence Layer 41 RDP restriction inside a different eight-failure notification cooldown. Reaching 32 nonexistent-account RDP failures now evaluates the independently authorized temporary rule even when the notification is suppressed.
 - Retains explicit administrator opt-in, distinct-name requirement, trusted-address exclusions, exact TCP 3389 rule, short expiry and no blocking on ordinary wrong-password events.
 - Added regression confirming a valid restriction candidate may coincide with a suppressed low-threshold alert. Windows end-to-end live 4625 rule installation/rollback remains a physical acceptance requirement.
+
+## 2026-11-13 — restart-persistent bounded binary integrity observations
+
+- Layer 35 now maintains protected local SHA-256 observations for OTS assemblies and a small set of core Windows binaries across service restarts. Changes yield an explicit warning; corrupt or linked baseline state is not automatically reset.
+- Checks actual file-stream size before hashing and declines linked files/ancestors; caps stored observations and serialized data. A baseline learned on first observation is NOT a trusted publisher signature or proof a binary was originally clean.
+- Regression tests cover first observation, unchanged hashes, changed hash after reloading and rejection of a corrupt saved state.

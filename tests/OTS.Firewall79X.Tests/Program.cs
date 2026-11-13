@@ -485,6 +485,22 @@ Test("Signed update staging rejects injected payloads and noncanonical Windows p
         Throws<InvalidDataException>(()=>TrustedArtifacts.Verify(Signed(malformed),key,folder,new Version(1,0),now));
     }
 });
+Test("Persistent binary integrity baselines detect changes after reload without silently resetting corruption",()=>{
+    var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
+    var path=Path.Combine(root,"file-integrity.json");
+    var binary=Path.Combine(root,"trusted.exe");
+    File.WriteAllText(binary,"first");
+    var a=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("first"u8));
+    var b=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("second"u8));
+    var state=new IntegrityBaselineStore(path);
+    Assert(state.Observe(binary,a)==IntegrityBaselineStore.ChangeKind.FirstObservation);
+    Assert(state.Observe(binary,a)==IntegrityBaselineStore.ChangeKind.Unchanged);
+    var reloaded=new IntegrityBaselineStore(path);
+    Assert(reloaded.Observe(binary,b)==IntegrityBaselineStore.ChangeKind.Changed);
+    Assert(new IntegrityBaselineStore(path).Observe(binary,b)==IntegrityBaselineStore.ChangeKind.Unchanged);
+    File.WriteAllText(path,"invalid state");
+    Throws<System.Text.Json.JsonException>(()=>new IntegrityBaselineStore(path));
+});
 Test("Network restrictions reject outbound, private, mapped and documentation sources",()=>{
     var now=DateTimeOffset.UtcNow;var detector=new NetworkAbuseWindow();
     foreach(var ip in new[]{"127.0.0.1","10.0.2.8","192.0.2.9","198.51.100.20","203.0.113.24","::1","fc00::123","2001:db8::1","::ffff:8.8.8.8"})

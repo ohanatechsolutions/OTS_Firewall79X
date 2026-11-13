@@ -23,8 +23,16 @@ public static class SystemQueries
     public static string Fingerprint(object data)=>Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(data)));
     public static string FileHash(string path)
     {
-        var f=new FileInfo(path);if(f.Length>64*1024*1024)throw new IOException("Integrity file exceeds budget");
-        using var s=File.Open(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);return Convert.ToHexString(SHA256.HashData(s));
+        var full=Path.GetFullPath(path);
+        var file=new FileInfo(full);
+        if(!file.Exists||(file.Attributes&FileAttributes.ReparsePoint)!=0)
+            throw new IOException("Linked or missing binary integrity target");
+        for(var dir=new DirectoryInfo(Path.GetDirectoryName(full)!);dir!=null;dir=dir.Parent)
+            if(dir.Exists&&(dir.Attributes&FileAttributes.ReparsePoint)!=0)
+                throw new IOException("Linked binary integrity parent directory");
+        using var stream=File.Open(full,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+        if(stream.Length>64*1024*1024)throw new IOException("Integrity file exceeds budget");
+        return Convert.ToHexString(SHA256.HashData(stream));
     }
     public static List<string> RootCertificates()
     {using var store=new X509Store(StoreName.Root,StoreLocation.LocalMachine);store.Open(OpenFlags.ReadOnly);return store.Certificates.Select(c=>c.Thumbprint).Order().ToList();}

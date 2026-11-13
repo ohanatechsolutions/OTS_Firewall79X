@@ -7,6 +7,7 @@ namespace OTS.Firewall79X.Windows;
 public sealed class LayerChecks : IDisposable
 {
     private readonly EventStore events;private readonly Dictionary<string,string> baselines=[];
+    private IntegrityBaselineStore? durableBinaryBaselines;
     private readonly NeighborChangeTracker neighborChanges=new();
     private NeighborInventory.Snapshot? neighborSnapshot;
     private Dictionary<string,string> neighbors=[];
@@ -392,9 +393,32 @@ public sealed class LayerChecks : IDisposable
                 var binaries=Directory.GetFiles(AppContext.BaseDirectory,"OTS*.dll");
                 var systemBinaries=new[]{"winlogon.exe","lsass.exe","services.exe"}
                     .Select(name=>Path.Combine(Environment.SystemDirectory,name)).Where(File.Exists).ToArray();
-                foreach(var file in binaries.Concat(systemBinaries))Changed(id,"File integrity: "+file,SystemQueries.FileHash(file));
-                return Good(id,$"{binaries.Length} OTS assemblies and {systemBinaries.Length} core Windows binaries have sampled SHA-256 baselines",LayerMode.Monitoring,
-                    "Baselines start on first observation, are not cryptographically attested and are not persisted across service restarts. Other files and fast changes can be missed.");
+                int first=0,modified=0;
+                try
+                {
+                    durableBinaryBaselines??=new IntegrityBaselineStore(Paths.At("binary-integrity-baselines.json"));
+                    foreach(var file in binaries.Concat(systemBinaries))
+                    {
+                        var result=durableBinaryBaselines.Observe(file,SystemQueries.FileHash(file));
+                        if(result==IntegrityBaselineStore.ChangeKind.FirstObservation)first++;
+                        if(result==IntegrityBaselineStore.ChangeKind.Changed)
+                        {
+                            modified++;
+                            events.Add(id,"Warning","Persistent binary integrity observation changed",
+                                $"{Path.GetFileName(file)} differed from the previously stored local SHA-256 baseline. An authorized Windows or application upgrade can cause this.");
+                        }
+                    }
+                }
+                catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Security.Cryptography.CryptographicException)
+                {
+                    return Missing(id,"Persistent binary integrity inventory unavailable or unsafe: "+Wire.Clean(ex.Message,120));
+                }
+                return new(id,LayerMode.Monitoring,modified==0,
+                    $"{binaries.Length} OTS assemblies, {systemBinaries.Length} core system binaries; "+
+                    $"persistent protected observations={durableBinaryBaselines.Count}; "+
+                    $"new baselines={first}; changed since previous reading={modified}",
+                    "Persistent first-observation SHA-256 baselines are not cryptographically attested vendor signatures or boot-time integrity. "+
+                    "An authorized update can change a binary; large files, transient mutations and unlisted paths are outside this sampled scope.");
             case 36:return Channel(id,"Security","Analyzes real 4688 process creation: script-capable binaries, suspicious command lines, and Office-to-script parent/child chains where native audit supplies the parent.");
             case 37:
                 var secure=SystemQueries.Reg(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State","UEFISecureBootEnabled");
