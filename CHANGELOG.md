@@ -110,3 +110,8 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Layer 79 ignores process names supplied by Windows as unavailable/exited/access-restricted, normalizes executable names for expected-background exclusions, and selectively evicts stale/oldest histories instead of wiping all 4,096 entries on saturation.
 - Retains monitoring of both public and internal TCP destinations; no new assumptions that private-network beacons are always benign. Short-lived TCP, UDP, background traffic and attribution races remain unverified.
 - Added classification regression checks for PID zero, access-restricted names and known background executables.
+
+## 2026-11-13 — mechanical 79-layer release coverage gate
+
+- Every Windows build validates exact layer-ID/name parity between the original complete requirement specification, runtime catalog, and declared coverage table.
+- Production builds are now mechanically rejected when any of the 79 layers lacks individually certified full-spec status. The gate does not manufacture certification or replace evidence: all 79 remain incomplete pending implementation/physical qualification.

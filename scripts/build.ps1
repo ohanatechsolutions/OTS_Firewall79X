@@ -1,5 +1,11 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Fail if the original 79-layer specification, runtime catalog, or declared
+# acceptance matrix are missing/mismatched. Production requires full certification.
+& ./scripts/verify-layer-coverage.ps1
+if ($env:OTS_RELEASE_CHANNEL -eq 'production') {
+  & ./scripts/verify-layer-coverage.ps1 -RequireCertified
+}
 # Parse all release signing scripts even in unsigned preview builds.
 # A broken production-only code path must not pass CI simply because keys are absent.
 foreach ($script in @('scripts/sign-release.ps1','scripts/verify-release-provenance.ps1')) {
