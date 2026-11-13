@@ -16,6 +16,20 @@ public sealed class NetworkAbuseWindow
     private readonly Dictionary<string,Queue<(DateTimeOffset At,int Port)>> history = new(StringComparer.Ordinal);
     private readonly Dictionary<string,DateTimeOffset> cooldown = new(StringComparer.Ordinal);
 
+    // Called under gate. Retire stale source histories before rejecting a new
+    // source at capacity; otherwise a flood of unique old senders could keep
+    // the fixed-size monitor permanently blind to future public sources.
+    private void PruneStale(DateTimeOffset now, int limit)
+    {
+        foreach (var stale in history.Where(x => x.Value.Count == 0 ||
+                     x.Value.Last().At < now.AddMinutes(-2))
+                 .Select(x => x.Key).Take(limit).ToArray())
+        {
+            history.Remove(stale);
+            cooldown.Remove(stale);
+        }
+    }
+
     public static bool EligiblePublicSource(string? value, IEnumerable<string>? trusted = null)
     {
         if(string.IsNullOrWhiteSpace(value) || !IPAddress.TryParse(value,out var ip) ||
@@ -56,8 +70,9 @@ public sealed class NetworkAbuseWindow
         {
             if(history.Count>=1024 && !history.ContainsKey(address))
             {
-                // Bounds before availability: do not arbitrarily target a new source.
-                return new(false,false,false,false,"");
+                PruneStale(now, 1024);
+                // Still full of active sources: bounded refusal, never a ban.
+                if(history.Count>=1024)return new(false,false,false,false,"");
             }
             if(!history.TryGetValue(address,out var window))history[address]=window=new();
             while(window.Count>0 && (window.Peek().At<now.AddSeconds(-60)||window.Count>=256))
@@ -70,12 +85,7 @@ public sealed class NetworkAbuseWindow
             bool candidate=different>=20 && window.Count>=20 || window.Count>=150 && different>=4;
             bool restricted=candidate && (!cooldown.TryGetValue(address,out var until)||now>=until);
             if(restricted)cooldown[address]=now.AddMinutes(20);
-            if(history.Count>900)
-            {
-                foreach(var stale in history.Where(x=>x.Value.Count==0 || x.Value.Last().At<now.AddMinutes(-2))
-                             .Select(x=>x.Key).Take(100).ToArray())
-                {history.Remove(stale);cooldown.Remove(stale);}
-            }
+            if(history.Count>900)PruneStale(now,100);
             return new(true,scan,flood,restricted,address);
         }
     }

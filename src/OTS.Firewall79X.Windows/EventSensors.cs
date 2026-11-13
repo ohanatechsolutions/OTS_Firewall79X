@@ -252,7 +252,7 @@ public sealed class EventSensors : IDisposable
             if(finding.ParsedAddressAnswer)Interlocked.Increment(ref parsedDnsResponses);
             if(finding.SuspiciousTransition)
                 events.Add(8,"Warning","Possible DNS rebinding pattern",
-                    $"A publicly resolved DNS name subsequently returned a local/private address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
+                    $"A publicly resolved DNS name subsequently returned a non-public/special-use address: {Wire.Clean(Get("QueryName"),128)}. Split-horizon DNS and VPN changes may be legitimate. No DNS block applied.");
             if(finding.ParsedAddressAnswer && Get("QueryStatus")=="0" && Domains?.IsListed(Get("QueryName"))==true)
                 events.Add(75,"High","Listed malicious-domain DNS lookup",$"Windows DNS event observed an exact current feed hostname: {Wire.Clean(Get("QueryName"),128)}. Source is a public unsigned mirror; verify context.");
             var attributedPid=Get("ClientPID");

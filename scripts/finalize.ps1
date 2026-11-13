@@ -1,5 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $report = Get-Content artifacts/vulnerability-report.json -Raw | ConvertFrom-Json
+# A failed or empty inventory is NOT a clean dependency scan.
+$projects = @($report.projects | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace([string]$_.path) })
+if ($projects.Count -lt 1) { throw 'Dependency vulnerability inventory returned no projects; refusing release' }
+if (@($projects | Where-Object { @($_.frameworks).Count -lt 1 }).Count -gt 0) {
+  throw 'Dependency vulnerability inventory omitted project framework data'
+}
 $severe = @()
 foreach($project in $report.projects) {
   foreach($framework in $project.frameworks) {

@@ -889,6 +889,42 @@ Test("Encrypted evidence exporter refuses linked destination paths and receipts"
     Throws<IOException>(()=>OffDeviceLogExport.CopyAndVerify(encrypted,receiver));
     Assert(File.Exists(encrypted),"Rejecting a linked receipt must never discard queued evidence");
 });
+Test("Inbound abuse history recovers from saturated stale public sources",()=>{
+    var monitor=new NetworkAbuseWindow();
+    var now=DateTimeOffset.UtcNow;
+    for(int i=0;i<1024;i++)
+    {
+        string ip=$"8.{i/256}.{i%256}.1";
+        var item=monitor.Observe(ip,"%%14592",445,now);
+        Assert(item.Eligible,"Known public source unexpectedly refused while filling bounded monitor: "+ip);
+    }
+    var stale=monitor.Observe("9.9.9.9","%%14592",445,now.AddMinutes(3));
+    Assert(stale.Eligible,"A full table of stale sources must be reclaimed before refusing a new source");
+    Assert(!stale.Restrict,"The new source must never be blocked without independently satisfying the restriction threshold");
+});
+Test("Layer 4 IP parser checks TCP header length and complete first-fragment headers",()=>{
+    byte[] ipv4=new byte[40];
+    ipv4[0]=0x45; ipv4[3]=40; ipv4[8]=64; ipv4[9]=6;
+    ipv4[32]=0x40; // TCP data offset claims 16 bytes, below the 20-byte minimum.
+    uint checksum=0;
+    for(int i=0;i<20;i+=2)checksum+=(uint)((ipv4[i]<<8)|ipv4[i+1]);
+    while((checksum>>16)!=0)checksum=(checksum&0xffff)+(checksum>>16);
+    ushort headerChecksum=(ushort)~checksum;
+    ipv4[10]=(byte)(headerChecksum>>8); ipv4[11]=(byte)headerChecksum;
+    Assert(IpPacketValidator.Inspect(ipv4).Status==IpPacketValidator.Verdict.Malformed);
+    ipv4[32]=0x50;
+    Assert(IpPacketValidator.Inspect(ipv4).Status==IpPacketValidator.Verdict.Valid);
+    Assert(IpPacketValidator.Inspect(ipv4.AsSpan(0,16)).Status==IpPacketValidator.Verdict.Unsupported);
+    byte[] firstFragment=new byte[68];
+    firstFragment[0]=0x60; firstFragment[5]=28; firstFragment[6]=44;
+    firstFragment[40]=6; // Fragment header -> TCP, offset zero (first fragment).
+    firstFragment[60]=0x40;
+    Assert(IpPacketValidator.Inspect(firstFragment).Status==IpPacketValidator.Verdict.Malformed);
+    firstFragment[60]=0x50;
+    Assert(IpPacketValidator.Inspect(firstFragment).Status==IpPacketValidator.Verdict.Valid);
+    firstFragment[42]=0; firstFragment[43]=8; // Noninitial fragment: no TCP header assumption.
+    Assert(IpPacketValidator.Inspect(firstFragment).Status==IpPacketValidator.Verdict.Valid);
+});
 Directory.CreateDirectory("artifacts");File.WriteAllText("artifacts/core-test-results.json",JsonSerializer.Serialize(results,new JsonSerializerOptions{WriteIndented=true}));Console.WriteLine($"{results.Count-failed}/{results.Count} tests passed");return failed==0?0:1;
 sealed class FakeStore(string? value):ISettingStore{public string? Value=value;public bool Fail;public string? Read(string key)=>Value;public void Write(string key,string? value){if(Fail)throw new IOException("Injected storage failure");Value=value;}}
 

@@ -16,3 +16,10 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Hardened off-device encrypted-log export against linked directory ancestors and symlink delivery receipts; added regression coverage.
 - Made the manual release workflow depend on the historical secret-pattern check; a finding blocks publication rather than bypassing the security gate.
 - Added an owner-only release handoff checklist; no production certification claimed.
+
+## 2026-11-13 — bounded monitoring and release-evidence follow-up
+
+- Reclaim expired source histories before declining new sources when the inbound-monitoring table is saturated; no automatic ban is based solely on table pressure.
+- Validate IPv4/IPv6 TCP header data offsets, first IPv6 fragments and Hop-by-Hop header position while explicitly distinguishing short captures from malformed packets. The parser is not attached to live WFP traffic.
+- Fail Windows CI if the dependency inventory command fails or returns empty/missing framework evidence.
+- Added core regressions for all above behaviors.

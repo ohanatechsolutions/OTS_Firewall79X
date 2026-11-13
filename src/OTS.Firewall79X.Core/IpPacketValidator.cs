@@ -32,7 +32,8 @@ public static class IpPacketValidator
     {
         if(b.Length<20)return Unknown(4,"Truncated IPv4 capture");
         int length=(b[0]&15)*4;
-        if(length<20 || length>60 || length>b.Length)return Bad(4,"Invalid IPv4 header length");
+        if(length<20 || length>60)return Bad(4,"Invalid IPv4 header length");
+        if(length>b.Length)return Unknown(4,"Truncated IPv4 options/header capture");
         int total=BinaryPrimitives.ReadUInt16BigEndian(b.Slice(2,2));
         if(total<length)return Bad(4,"IPv4 total length smaller than header");
         if(total>b.Length)return Unknown(4,"IPv4 capture shorter than declared packet");
@@ -58,6 +59,12 @@ public static class IpPacketValidator
                 int udpLength=BinaryPrimitives.ReadUInt16BigEndian(b.Slice(length+4,2));
                 if(udpLength<8 || udpLength>total-length)return Bad(4,"Invalid IPv4 UDP length");
             }
+            else
+            {
+                int tcpHeaderBytes=(b[length+12]>>4)*4;
+                if(tcpHeaderBytes<20 || tcpHeaderBytes>total-length)
+                    return Bad(4,"Invalid IPv4 TCP header data offset");
+            }
         }
         return Ok(4,false,"IPv4 packet header and declared length inspected");
     }
@@ -74,6 +81,8 @@ public static class IpPacketValidator
         while(next is 0 or 43 or 44 or 51 or 60 or 135 or 139 or 140)
         {
             if(++extensions>8||offset-40>2048)return Unknown(6,"IPv6 extension-chain inspection budget exceeded");
+            if(next==0 && offset!=40)
+                return Bad(6,"IPv6 Hop-by-Hop header must appear first");
             if(next==44)
             {
                 if(offset+8>end)return Bad(6,"Truncated IPv6 fragmentation header");
@@ -96,17 +105,23 @@ public static class IpPacketValidator
         if(next==50)return Unknown(6,"Encrypted ESP payload requires a supporting security association");
         if(next==59)return Ok(6,fragmented,"IPv6 no-next-header packet structurally valid");
         if(next is not (6 or 17 or 58 or 1))return Unknown(6,"Unrecognized IPv6 next-header protocol");
-        if(!fragmented)
+        if(nonFirst)return Ok(6,true,"IPv6 noninitial fragment inspected without assuming upper-layer header");
+        // RFC 7112: the first IPv6 fragment must contain the upper-layer
+        // header. Later fragments are never parsed as transport headers.
+        int minimum=next switch{6=>20,17=>8,_=>4};
+        if(end-offset<minimum)return Bad(6,"Truncated IPv6 first/unfragmented transport header");
+        if(next==17)
         {
-            int minimum=next switch{6=>20,17=>8,_=>4};
-            if(end-offset<minimum)return Bad(6,"Truncated unfragmented IPv6 transport header");
-            if(next==17)
-            {
-                int udpLength=BinaryPrimitives.ReadUInt16BigEndian(b.Slice(offset+4,2));
-                if(udpLength!=end-offset)return Bad(6,"IPv6 UDP length mismatch");
-            }
+            int udpLength=BinaryPrimitives.ReadUInt16BigEndian(b.Slice(offset+4,2));
+            if(udpLength<8 || (fragmented ? udpLength<end-offset : udpLength!=end-offset))
+                return Bad(6,"IPv6 UDP length mismatch");
         }
-        else if(nonFirst)return Ok(6,true,"IPv6 noninitial fragment inspected without assuming upper-layer header");
+        if(next==6)
+        {
+            int tcpHeaderBytes=(b[offset+12]>>4)*4;
+            if(tcpHeaderBytes<20 || tcpHeaderBytes>end-offset)
+                return Bad(6,"Invalid IPv6 TCP header data offset");
+        }
         return Ok(6,fragmented,fragmented
             ?"IPv6 fragment header inspected; overlap/reassembly requires a stateful WFP packet source"
             :"IPv6 extension chain and transport length inspected");

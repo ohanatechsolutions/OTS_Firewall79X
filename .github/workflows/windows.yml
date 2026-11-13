@@ -40,7 +40,9 @@ jobs:
       - name: Dependency vulnerability inventory
         if: always()
         shell: pwsh
-        run: dotnet list OTS.Firewall79X.sln package --vulnerable --include-transitive --format json | Out-File artifacts/vulnerability-report.json
+        run: |
+          dotnet list OTS.Firewall79X.sln package --vulnerable --include-transitive --format json | Out-File artifacts/vulnerability-report.json
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency vulnerability inventory failed; cannot finalize release' }
       - name: Enforce dependency gate and include test evidence
         shell: pwsh
         run: ./scripts/finalize.ps1
