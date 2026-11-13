@@ -98,3 +98,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Changed core AES-GCM archive creation to write through a unique same-directory temporary file, flush, and move without overwriting. Failed commits remove only their own staging file and preserve any prior archive.
 - Aligned encrypted-report GUI save behavior with the same versioned no-overwrite policy.
 - Added regression proving an attempted overwrite preserves the original ciphertext and leaves no staging artifact.
+
+## 2026-11-13 — crash-recoverable authenticated event-log rotation
+
+- Layer 61 rotation now atomically renames the active log into a pending source, builds and verifies a gzip archive, and commits the compressed segment before deleting the pending source. Startup selects valid pending/gzip pairs once, preserving one authoritative chain and rejecting mismatched duplicates.
+- Finalizes recoverable pending rotations only after full HMAC-chain/schema verification. Uses high-resolution sortable archive timestamps, bounded segment validation and exact owned-file retention patterns.
+- Added synthetic normal, interrupted, duplicate and tamper tests. Physical abrupt-power-loss and disk-full fault-injection acceptance remain outstanding.

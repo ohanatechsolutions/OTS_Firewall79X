@@ -52,7 +52,7 @@ public sealed class EventStore
         chain=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         try
         {
-            var files=Directory.GetFiles(directory,"events-*.jsonl.gz").Order(StringComparer.Ordinal).ToList();
+            var files=EventLogRotation.SelectVerifiedSegments(directory).ToList();
             files.Add(Path.Combine(directory,"events.jsonl"));
             var lines=new List<string>();
             foreach(var file in files.Where(File.Exists))
@@ -87,6 +87,9 @@ public sealed class EventStore
                 Total++;if(evt.Blocked)Blocked++;
                 recent.Enqueue(evt);while(recent.Count>300)recent.Dequeue();
             }
+            // Reconcile only after *every* retained record has authenticated.
+            // A crashed rotation's pending segment is never ignored silently.
+            EventLogRotation.FinalizePending(directory);
         }
         catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
         {
@@ -134,10 +137,10 @@ public sealed class EventStore
             var path=Path.Combine(directory,"events.jsonl");
             if(File.Exists(path)&&new FileInfo(path).Length>2*1024*1024)
             {
-                var archive=Path.Combine(directory,$"events-{now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.jsonl.gz");
-                using(var input=File.OpenRead(path))using(var output=File.Create(archive))using(var gz=new GZipStream(output,CompressionLevel.Fastest))input.CopyTo(gz);
-                File.Delete(path);
-                foreach(var old in Directory.GetFiles(directory,"*.gz").OrderByDescending(File.GetLastWriteTimeUtc).Skip(20))File.Delete(old);
+                EventLogRotation.Rotate(path,now);
+                foreach(var old in Directory.GetFiles(directory,"events-*.jsonl.gz")
+                         .OrderByDescending(Path.GetFileName,StringComparer.Ordinal).Skip(20))
+                    File.Delete(old);
             }
             File.AppendAllText(path,JsonSerializer.Serialize(
                 new EventIntegrity.Record(previous,data,next,keyring.CurrentId),Wire.Json)+"\n");

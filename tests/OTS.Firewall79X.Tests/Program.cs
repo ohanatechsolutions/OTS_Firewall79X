@@ -510,6 +510,37 @@ Test("Signed update staging rejects injected payloads and noncanonical Windows p
         Throws<InvalidDataException>(()=>TrustedArtifacts.Verify(Signed(malformed),key,folder,new Version(1,0),now));
     }
 });
+Test("Log rotation preserves identical authenticated source through normal gzip commit",()=>{
+    var dir=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(dir);
+    var active=Path.Combine(dir,"events.jsonl");
+    var source=string.Join("\n",Enumerable.Range(0,100).Select(i=>"row-"+i))+"\n";
+    File.WriteAllText(active,source);
+    EventLogRotation.Rotate(active,DateTimeOffset.UtcNow);
+    Assert(!File.Exists(active));
+    var segments=EventLogRotation.SelectVerifiedSegments(dir);
+    Assert(segments.Count==1&&segments[0].EndsWith(".jsonl.gz",StringComparison.Ordinal));
+    using var raw=File.OpenRead(segments[0]);
+    using var gz=new System.IO.Compression.GZipStream(raw,System.IO.Compression.CompressionMode.Decompress);
+    using var reader=new StreamReader(gz);
+    Assert(reader.ReadToEnd()==source);
+});
+Test("Log rotation recovers pending segments and refuses mismatched duplicate gzip",()=>{
+    var dir=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(dir);
+    var pending=Path.Combine(dir,"events-20261113-010000-test.jsonl.pending");
+    File.WriteAllText(pending,"HMAC-verified line\n");
+    Assert(EventLogRotation.SelectVerifiedSegments(dir).SequenceEqual(new[]{pending}));
+    EventLogRotation.FinalizePending(dir);
+    Assert(!File.Exists(pending));
+    var gz=Path.ChangeExtension(pending[..^".pending".Length],"gz");
+    // Directory recovery now has one gzip segment.
+    Assert(EventLogRotation.SelectVerifiedSegments(dir).Count==1);
+    // A simulated crash after gzip commit leaves an identical source alongside
+    // the archive; that copy must be verified and ignored, not replayed twice.
+    File.WriteAllText(pending,"HMAC-verified line\n");
+    Assert(EventLogRotation.SelectVerifiedSegments(dir).Count==1);
+    File.WriteAllText(pending,"tampered duplicate\n");
+    Throws<InvalidDataException>(()=>EventLogRotation.SelectVerifiedSegments(dir));
+});
 Test("Persistent binary integrity baselines detect changes after reload without silently resetting corruption",()=>{
     var root=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(root);
     var path=Path.Combine(root,"file-integrity.json");
