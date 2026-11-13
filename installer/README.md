@@ -4,7 +4,7 @@ The repository deliberately contains **source code**, not a Git LFS-backed Windo
 
 ## Working offline-capable installer
 
-1. Sign in to GitHub if required (while this repository remains private).
+1. Open the repository in GitHub; sign in only if GitHub requires it.
 2. Open [OTS Firewall79X Releases](https://github.com/ohanatechsolutions/OTS_Firewall79X/releases).
 3. Download **OTS-Firewall79X-Windows-x64.zip** from the latest successful *development preview* release. This is a compiled package, **not** the auto-generated Source code ZIP.
 4. Extract it. Open the **installer** subfolder and run **OTS-Firewall79X-Setup.exe**. Approve Windows administrator authorization. Alternatively, download the standalone setup EXE from Release Assets.

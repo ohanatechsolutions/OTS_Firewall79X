@@ -1,5 +1,7 @@
 # OTS Firewall79X — installer and security acceptance audit (2026-10-27 Hawaii time)
 
+> Historical audit snapshot: statements below about a setup EXE tracked in Git LFS describe the repository **on October 27, 2026**, not the current branch. As of November 13, the current repository ignores the compiled installer and distributes full executable bytes through CI artifacts and explicitly published GitHub Release Assets. Preserve this audit as historical evidence; current instructions are in `installer/README.md`.
+
 ## Scope and methodology
 
 Reviewed the user-requested one-click Windows 10/11 x64 installer and matching SHA-256, source/release distribution methods, CI release generation, service and recovery, security feature coverage, and prior code/quality requests. Existing run [#25](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/40636379755) provided Windows Server 2025 evidence; a physical Windows 11 Home test was **not** performed. This document is not a certification or a completed 79-layer implementation.

@@ -23,3 +23,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Validate IPv4/IPv6 TCP header data offsets, first IPv6 fragments and Hop-by-Hop header position while explicitly distinguishing short captures from malformed packets. The parser is not attached to live WFP traffic.
 - Fail Windows CI if the dependency inventory command fails or returns empty/missing framework evidence.
 - Added core regressions for all above behaviors.
+
+## 2026-11-13 — distribution instructions corrected
+
+- Removed obsolete current-branch claims that Git LFS contains the executable; installers are generated in GitHub Actions and distributed only through Release Assets.
+- Preserved October 27 installer audit as an explicitly dated historical snapshot; current source archives are never installable packages.
+- Clarified that release publication is blocked on unresolved secret-pattern scan findings.
