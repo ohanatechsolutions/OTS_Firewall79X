@@ -50,8 +50,23 @@ public static class FolderBackup
             using var manifest=zip.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(manifest,entries,Wire.Json);
         }
         var temp=destination+"."+Guid.NewGuid().ToString("N")+".partial";
-        try{SecureArchive.Encrypt(temp,payload.ToArray(),password);var summary=Verify(temp,password);File.Move(temp,destination,false);return summary;}
-        finally{if(File.Exists(temp))File.Delete(temp);}
+        var plaintext=payload.ToArray();
+        try
+        {
+            SecureArchive.Encrypt(temp,plaintext,password);
+            var summary=Verify(temp,password);
+            File.Move(temp,destination,false);
+            return summary;
+        }
+        finally
+        {
+            // The encrypted archive is durable; temporary unencrypted ZIP copies
+            // must not wait for garbage collection without best-effort erasure.
+            CryptographicOperations.ZeroMemory(plaintext);
+            if(payload.TryGetBuffer(out var buffer))
+                CryptographicOperations.ZeroMemory(buffer.AsSpan());
+            if(File.Exists(temp))File.Delete(temp);
+        }
     }
     public static Summary Verify(string archive,string password)=>Read(archive,password,null);
     public static Summary Restore(string archive,string newFolder,string password)

@@ -35,3 +35,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Implemented up to four strict OSV querybatch request rounds, following per-package continuation tokens for only the incomplete packages. Duplicate advisory IDs are deduplicated and unsupported/oversized data fails closed.
 - Bounded streamed responses to 1 MiB per request and explicitly mark repeated tokens or exceeded page budget as incomplete, never an all-clear.
 - Added core regression cases for mixed query pagination, malicious token types and wrong response cardinality.
+
+## 2026-11-13 — encrypted evidence memory and read hardening
+
+- Read encrypted archives from a single size-checked open stream, rejecting size changes instead of trusting a separate pre-read file stat.
+- Best-effort clearing of internal encryption/ciphertext/key buffers and partial plaintext when authentication fails, without mutating caller-owned input buffers.
+- Wipe temporary plaintext backup ZIP buffers after encryption/verification; add regression tests for caller-buffer preservation and invalid archive sizes.
