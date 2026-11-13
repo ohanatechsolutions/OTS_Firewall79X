@@ -53,6 +53,8 @@ public sealed class MaliciousDomainFeed : IDisposable
             var feed = MaliciousDomainIntelligence.Parse(new UTF8Encoding(false, true).GetString(bytes));
             if (!MaliciousDomainIntelligence.IsFresh(feed, DateTimeOffset.UtcNow) || feed.Domains.Count < 10)
                 throw new InvalidDataException("Domain mirror is stale, unexpectedly small or has a future publication time");
+            ThreatFeedPublicationFloor.Accept(Paths.At("urlhaus-publication-floor.txt"),
+                feed.UpdatedUtc,DateTimeOffset.UtcNow,TimeSpan.FromHours(12),TimeSpan.FromMinutes(10));
             Volatile.Write(ref active, feed);
             message = $"HTTPS fetch verified format/time; body SHA-256 {Convert.ToHexString(SHA256.HashData(bytes))}; not cryptographically authenticated";
         }

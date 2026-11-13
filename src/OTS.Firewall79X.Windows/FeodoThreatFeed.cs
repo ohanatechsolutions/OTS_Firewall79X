@@ -58,6 +58,8 @@ public sealed class FeodoThreatFeed : IDisposable
             var parsed=FeodoFeedParser.Parse(body);
             if(!FeodoFeedParser.IsFresh(parsed,DateTimeOffset.UtcNow))
                 throw new InvalidDataException("Source publication timestamp is stale or in the future");
+            ThreatFeedPublicationFloor.Accept(Paths.At("feodo-publication-floor.txt"),
+                parsed.UpdatedUtc,DateTimeOffset.UtcNow,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5));
             Volatile.Write(ref active,parsed);
             health=$"Last HTTPS fetch {DateTimeOffset.UtcNow:O}; SHA-256 {Convert.ToHexString(SHA256.HashData(payload))}; no feed signing proof";
         }

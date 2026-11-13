@@ -263,7 +263,7 @@ public sealed class Engine : IDisposable
             case 62:return Good($"Measured resource governor: {governor.CycleInterval.TotalSeconds:0}s cycle, {governor.InventoryInterval.TotalMinutes:0}m inventory. {governor.Reason}",limit:"Low disk defers optional snapshots and quarterly reports; urgent event logging remains enabled. Full battery, memory, and disk stress qualification still required.");
             case 63:return feed.Active is { } intel
                 ?new(id,LayerMode.Auditing,false,
-                    $"Feodo HTTPS publication timestamp {intel.UpdatedUtc:O} is within the freshness window; {intel.Addresses.Count} parsed indicators; publisher signature is NOT verified",
+                    $"Feodo HTTPS publication timestamp {intel.UpdatedUtc:O} is fresh and protected by a local monotonic publication high-water mark; {intel.Addresses.Count} parsed indicators; publisher signature is NOT verified",
                     "HTTPS and a source timestamp are not a cryptographic feed signature. Observed matches may trigger temporary rules under other layers; broader authenticated feed coverage remains incomplete.")
                 :new(id,LayerMode.Unavailable,false,feed.Summary,
                     "No valid current feed available. Previous intelligence-based rules are removed during normal maintenance; independent signed feed authenticity is not configured.");

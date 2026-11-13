@@ -68,3 +68,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Reject unsigned sidecar payloads, hidden files and nested directories in a purportedly signed staging folder. Strengthened Windows filename and reserved-device validation.
 - Validate artifact size from the opened file stream and enforce exact signed-file inventory cardinality; add malicious extra-file/folder and reserved-path tests.
 - Signing identity, authenticated update distribution, execution and rollback remain release blockers; this is not a completed automatic updater.
+
+## 2026-11-13 — local anti-rollback guard for feed publication timestamps
+
+- Persist a per-feed UTC publication high-water mark under protected OTS service data. A newly downloaded, even still-fresh, Feodo or URLhaus-derived snapshot cannot replace a newer accepted publication after a service restart.
+- Reject malformed/linked state files and stale/future timestamps; preserve a fail-closed state on storage or parsing errors. Separate 24h (Feodo) and 12h (domain mirror) freshness windows.
+- Add core regressions for newer, equal, older, stale, future and corrupted publications. This is anti-replay defense in depth, **not publisher signature authentication**.

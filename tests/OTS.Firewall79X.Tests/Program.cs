@@ -435,6 +435,27 @@ Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and
     Throws<InvalidDataException>(()=>
         TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
 });
+Test("Threat feed publication floor accepts only fresh, monotonic UTC timestamps across instances",()=>{
+    var directory=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(directory);
+    var path=Path.Combine(directory,"publication-floor.txt");
+    var now=DateTimeOffset.UtcNow;
+    var first=now.AddMinutes(-30);
+    ThreatFeedPublicationFloor.Accept(path,first,now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5));
+    Assert(File.Exists(path));
+    // A second instance must reject rollback even when the older feed is still fresh.
+    Throws<InvalidDataException>(()=>ThreatFeedPublicationFloor.Accept(path,first.AddSeconds(-1),
+        now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5)));
+    var next=now.AddMinutes(-10);
+    ThreatFeedPublicationFloor.Accept(path,next,now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5));
+    ThreatFeedPublicationFloor.Accept(path,next,now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5));
+    Throws<InvalidDataException>(()=>ThreatFeedPublicationFloor.Accept(path,
+        now.AddHours(-25),now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5)));
+    Throws<InvalidDataException>(()=>ThreatFeedPublicationFloor.Accept(path,
+        now.AddMinutes(6),now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5)));
+    File.WriteAllText(path,"corrupt publication floor");
+    Throws<InvalidDataException>(()=>ThreatFeedPublicationFloor.Accept(path,
+        now,now,TimeSpan.FromHours(24),TimeSpan.FromMinutes(5)));
+});
 Test("Signed update staging rejects injected payloads and noncanonical Windows paths",()=>{
     using var publisher=System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
     var key=publisher.ExportSubjectPublicKeyInfo();var now=DateTimeOffset.UtcNow;
