@@ -130,8 +130,18 @@ public sealed class RansomwareActivity
     public bool Observe(string path, WatcherChangeTypes kind, DateTimeOffset now)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
+        // Windows event delivery can be out-of-order and wall-clock time can
+        // move backward. Abandon stale windows rather than suppressing new file
+        // activity for hours or combining observations from different periods.
+        if (events.Count > 0 && now < events.Last().Time)
+        {
+            events.Clear();
+            last.Clear();
+        }
+        if (now < lastAlert) lastAlert = now; // Restart cooldown after a clock rollback.
         while (events.Count > 0 && (now - events.Peek().Time).TotalSeconds > 15) events.Dequeue();
-        if (last.TryGetValue(path, out var prior) && now - prior < TimeSpan.FromMilliseconds(750)) return false;
+        if (last.TryGetValue(path, out var prior) && now >= prior &&
+            now - prior < TimeSpan.FromMilliseconds(750)) return false;
         last[path] = now;
         if (last.Count > 4096) last.Clear();
         events.Enqueue((now, path, kind));

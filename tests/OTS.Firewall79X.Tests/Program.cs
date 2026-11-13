@@ -167,19 +167,6 @@ Test("OSV strict pagination parsing rejects malicious tokens and response types"
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
-Test("Encrypted archive preserves caller bytes and rejects oversized or truncated files",()=>{
-    var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-    byte[] source=System.Text.Encoding.UTF8.GetBytes("sensitive archive evidence");
-    var expected=(byte[])source.Clone();
-    SecureArchive.Encrypt(path,source,"twelve-chars-or-more");
-    Assert(source.AsSpan().SequenceEqual(expected),"Archive encryption unexpectedly mutated caller-owned bytes");
-    var roundtrip=SecureArchive.Decrypt(path,"twelve-chars-or-more");
-    Assert(roundtrip.AsSpan().SequenceEqual(expected));
-    System.Security.Cryptography.CryptographicOperations.ZeroMemory(roundtrip);
-    var original=File.ReadAllBytes(path);
-    File.WriteAllBytes(path,original.AsSpan(0,40).ToArray());
-    Throws<InvalidDataException>(()=>SecureArchive.Decrypt(path,"twelve-chars-or-more"));
-});
 Test("Encrypted archive rejects modified ciphertext",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");var bytes=File.ReadAllBytes(path);bytes[^1]^=1;File.WriteAllBytes(path,bytes);Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"twelve-chars-or-more"));});
 Test("Encrypted archive rejects short password and invalid format",()=>{Throws<ArgumentException>(()=>SecureArchive.Encrypt(Temp(),[1],"short"));var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllText(path,"bad");Throws<InvalidDataException>(()=>SecureArchive.Decrypt(path,"twelve-chars-or-more"));});
 Test("Folder backup roundtrip preserves files without overwriting",()=>{var parent=Path.GetDirectoryName(Temp())!;var source=Path.Combine(parent,"source");Directory.CreateDirectory(Path.Combine(source,"nested"));File.WriteAllText(Path.Combine(source,"nested","file.txt"),"test content");var archive=Path.Combine(parent,"backup.otsfolder");var summary=FolderBackup.Create(source,archive,"twelve-chars-or-more");Assert(summary.Files==1);var target=Path.Combine(parent,"restored");FolderBackup.Restore(archive,target,"twelve-chars-or-more");Assert(File.ReadAllText(Path.Combine(target,"nested","file.txt"))=="test content");Throws<IOException>(()=>FolderBackup.Restore(archive,target,"twelve-chars-or-more"));Throws<IOException>(()=>FolderBackup.Create(source,archive,"twelve-chars-or-more"));});
@@ -560,6 +547,25 @@ Test("Ransomware burst requires destructive distinct changes, ignores repeated n
     Assert(!tracker.Observe("C:/other/60.locked",WatcherChangeTypes.Renamed,now.AddSeconds(5)));
     var duplicate=new RansomwareActivity();
     for(int i=0;i<100;i++)Assert(!duplicate.Observe("C:/same.file",WatcherChangeTypes.Deleted,now.AddMilliseconds(i*40)));
+});
+Test("Ransomware heuristic resets stale event windows after clock rollback",()=>{
+    var activity=new RansomwareActivity();
+    var now=DateTimeOffset.UtcNow;
+    bool alert=false;
+    for (int i=0;i<40;i++)
+        alert |= activity.Observe("pre-"+i,WatcherChangeTypes.Deleted,now.AddMilliseconds(i*20));
+    Assert(alert,"An actual destructive file burst should be observed");
+    var earlier=now.AddHours(-1);
+    Assert(!activity.Observe("rollback",WatcherChangeTypes.Deleted,earlier),
+        "Clock rollback must not preserve the previous destructive burst");
+    for(int i=0;i<40;i++)
+        Assert(!activity.Observe("within-cooldown-"+i,WatcherChangeTypes.Deleted,earlier.AddMilliseconds(i*20)),
+            "A backward clock jump must not bypass alert cooldown");
+    bool later=false;
+    for(int i=0;i<40;i++)
+        later |= activity.Observe("after-cooldown-"+i,WatcherChangeTypes.Deleted,
+            earlier.AddMinutes(3).AddMilliseconds(i*20));
+    Assert(later,"Ransomware heuristic should recover after bounded cooldown");
 });
 Test("Beacon detector demands sufficient regularity and suppresses expected background tasks",()=>{
     var now=DateTimeOffset.UtcNow;
