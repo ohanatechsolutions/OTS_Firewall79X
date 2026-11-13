@@ -136,6 +136,34 @@ Test("OSV result pagination is incomplete, never certified as fully checked",()=
     var parsed=OsvBatchValidator.Parse("""{"results":[{"next_page_token":"future","vulns":[]}]}""",packages);
     Assert(!parsed.Complete&&parsed.Findings.Single().NeedsAnotherPage&&parsed.AdvisoryCount==0);
 });
+Test("OSV continuation is assigned to its original query subset",()=>{
+    NuGetLockParser.Package[] packages=[new("First","1.0"),new("Second","2.0"),new("Third","3.0")];
+    var first=OsvBatchValidator.ParsePage("""
+        {"results":[
+            {"vulns":[{"id":"GHSA-one"}],"next_page_token":"next-first"},
+            {"vulns":[{"id":"CVE-2026-1234"}]},
+            {"next_page_token":"next-third"}]}
+        """,3);
+    Assert(first.Results[0].NextPageToken=="next-first");
+    Assert(first.Results[1].NextPageToken==null);
+    Assert(first.Results[2].NextPageToken=="next-third");
+    var followup=OsvBatchValidator.ParsePage("""
+        {"results":[
+            {"vulns":[{"id":"GHSA-two"},{"id":"GHSA-one"}]},
+            {"vulns":[{"id":"GHSA-third"}]}]}
+        """,2);
+    Assert(followup.Results[0].AdvisoryIds.Count==2);
+    Assert(followup.Results[1].AdvisoryIds.Single()=="GHSA-third");
+    Assert(followup.Results.All(x=>x.NextPageToken==null));
+    Assert(packages.Length==3);
+});
+Test("OSV strict pagination parsing rejects malicious tokens and response types",()=>{
+    Throws<InvalidDataException>(()=>OsvBatchValidator.ParsePage("""{"results":[{"next_page_token":5}]}""",1));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.ParsePage("""{"results":[{"next_page_token":"line\\nbreak"}]}""",1));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.ParsePage("""{"results":[{"next_page_token":"t"}]}""",2));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.ParsePage("""{"results":[{"vulns":null}]}""",1));
+    Throws<InvalidDataException>(()=>OsvBatchValidator.ParsePage("""{"results":[{"vulns":[{"id":"../escape"}]}]}""",1));
+});
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});

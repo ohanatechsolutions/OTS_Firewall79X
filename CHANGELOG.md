@@ -29,3 +29,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Removed obsolete current-branch claims that Git LFS contains the executable; installers are generated in GitHub Actions and distributed only through Release Assets.
 - Preserved October 27 installer audit as an explicitly dated historical snapshot; current source archives are never installable packages.
 - Clarified that release publication is blocked on unresolved secret-pattern scan findings.
+
+## 2026-11-13 — OSV advisory query pagination and bounds
+
+- Implemented up to four strict OSV querybatch request rounds, following per-package continuation tokens for only the incomplete packages. Duplicate advisory IDs are deduplicated and unsupported/oversized data fails closed.
+- Bounded streamed responses to 1 MiB per request and explicitly mark repeated tokens or exceeded page budget as incomplete, never an all-clear.
+- Added core regression cases for mixed query pagination, malicious token types and wrong response cardinality.
