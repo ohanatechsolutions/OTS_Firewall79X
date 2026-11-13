@@ -307,7 +307,23 @@ public partial class MainWindow : Window
     private void ArchiveClick(object sender,RoutedEventArgs e)
     {
         var report=Report();if(report==null)return;var save=new SaveFileDialog{Filter="Encrypted OTS archive|*.otsbackup",FileName=$"OTS-Report-{DateTime.Now:yyyyMMdd-HHmmss}.otsbackup"};if(save.ShowDialog()!=true)return;
-        try{SecureArchive.Encrypt(save.FileName,Encoding.UTF8.GetBytes(report),ArchivePassword.Password);var verified=SecureArchive.Decrypt(save.FileName,ArchivePassword.Password);if(!verified.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(report)))throw new CryptographicException("Archive verification failed");StatusLine.Text="Encrypted archive written and restore verification passed.";}catch(Exception ex){MessageBox.Show(ex.Message);}finally{ArchivePassword.Clear();}
+        byte[]? cleartext=null,verified=null;
+        try
+        {
+            cleartext=Encoding.UTF8.GetBytes(report);
+            SecureArchive.Encrypt(save.FileName,cleartext,ArchivePassword.Password);
+            verified=SecureArchive.Decrypt(save.FileName,ArchivePassword.Password);
+            if(!CryptographicOperations.FixedTimeEquals(verified,cleartext))
+                throw new CryptographicException("Archive verification failed");
+            StatusLine.Text="Encrypted archive written and restore verification passed.";
+        }
+        catch(Exception ex){MessageBox.Show(ex.Message);}
+        finally
+        {
+            if(verified!=null)CryptographicOperations.ZeroMemory(verified);
+            if(cleartext!=null)CryptographicOperations.ZeroMemory(cleartext);
+            ArchivePassword.Clear();
+        }
     }
     private void RestoreArchiveClick(object sender,RoutedEventArgs e)
     {
@@ -322,7 +338,9 @@ public partial class MainWindow : Window
     private async void FolderBackupClick(object sender,RoutedEventArgs e)
     {
         var folder=new OpenFolderDialog{Title="Select the folder to encrypt (60 MiB maximum)"};if(folder.ShowDialog()!=true)return;
-        var save=new SaveFileDialog{Filter="Encrypted folder backup|*.otsfolder",FileName=$"OTS-Folder-{DateTime.Now:yyyyMMdd-HHmmss}.otsfolder",OverwritePrompt=true};if(save.ShowDialog()!=true)return;
+        var save=new SaveFileDialog{Filter="Encrypted folder backup|*.otsfolder",FileName=$"OTS-Folder-{DateTime.Now:yyyyMMdd-HHmmss}.otsfolder",OverwritePrompt=false};if(save.ShowDialog()!=true)return;
+        if(File.Exists(save.FileName)||Directory.Exists(save.FileName))
+        {MessageBox.Show("Encrypted backups never overwrite existing files. Choose a new backup filename.","Backup name already exists",MessageBoxButton.OK,MessageBoxImage.Warning);return;}
         var password=ArchivePassword.Password;ArchivePassword.Clear();
         try{StatusLine.Text="Encrypting selected files and verifying every file hash…";var summary=await Task.Run(()=>FolderBackup.Create(folder.FolderName,save.FileName,password));StatusLine.Text=$"Verified backup saved: {summary.Files} files, {summary.Bytes:N0} bytes. Keep the passphrase safe.";}
         catch(Exception ex){MessageBox.Show(ex.Message,"Backup failed",MessageBoxButton.OK,MessageBoxImage.Warning);}

@@ -57,3 +57,8 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 
 - Recognize contiguous dotted-decimal subnet masks emitted by Windows Firewall COM when checking potential rule overlaps; reject noncontiguous masks and cross-family comparisons.
 - Added positive, negative and malformed-mask regression checks. This is read-only analysis and does not establish actual WFP/GPO precedence.
+
+## 2026-11-13 — GUI encrypted report and non-overwrite protections
+
+- Clear transient plaintext/verification byte arrays after encrypted report save and verification, including failures; the immutable managed report string still cannot be guaranteed erased.
+- Disallow selecting an existing encrypted-folder backup filename before beginning a new backup, matching the established no-overwrite policy.
