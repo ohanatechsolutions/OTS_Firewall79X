@@ -435,6 +435,34 @@ Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and
     Throws<InvalidDataException>(()=>
         TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
 });
+Test("Signed update staging rejects injected payloads and noncanonical Windows paths",()=>{
+    using var publisher=System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+    var key=publisher.ExportSubjectPublicKeyInfo();var now=DateTimeOffset.UtcNow;
+    var folder=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(folder);
+    var file=Path.Combine(folder,"update.bin");File.WriteAllText(file,"trusted contents");
+    var digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file)));
+    var entry=new TrustedArtifacts.Artifact("update.bin",new FileInfo(file).Length,digest);
+    var manifest=new TrustedArtifacts.Manifest("OTS Firewall79X","3.0.0",now.AddMinutes(-1),now.AddHours(1),
+        "software",[entry]);
+    string Signed(TrustedArtifacts.Manifest info)
+    {
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(info,Wire.Json);
+        return JsonSerializer.Serialize(new TrustedArtifacts.Envelope(Convert.ToBase64String(bytes),
+            Convert.ToBase64String(publisher.SignData(bytes,System.Security.Cryptography.HashAlgorithmName.SHA256))),Wire.Json);
+    }
+    Assert(TrustedArtifacts.Verify(Signed(manifest),key,folder,new Version(1,0),now).Files.Count==1);
+    File.WriteAllText(Path.Combine(folder,"unexpected.ps1"),"not signed by the manifest");
+    Throws<InvalidDataException>(()=>TrustedArtifacts.Verify(Signed(manifest),key,folder,new Version(1,0),now));
+    File.Delete(Path.Combine(folder,"unexpected.ps1"));
+    Directory.CreateDirectory(Path.Combine(folder,"nested"));
+    Throws<InvalidDataException>(()=>TrustedArtifacts.Verify(Signed(manifest),key,folder,new Version(1,0),now));
+    Directory.Delete(Path.Combine(folder,"nested"));
+    foreach(var filename in new[]{"CON.txt","AUX.exe","COM1.dll","update.bin.","update.bin ","evil:stream","a|b.dll"})
+    {
+        var malformed=manifest with{Files=[entry with{Name=filename}]};
+        Throws<InvalidDataException>(()=>TrustedArtifacts.Verify(Signed(malformed),key,folder,new Version(1,0),now));
+    }
+});
 Test("Network restrictions reject outbound, private, mapped and documentation sources",()=>{
     var now=DateTimeOffset.UtcNow;var detector=new NetworkAbuseWindow();
     foreach(var ip in new[]{"127.0.0.1","10.0.2.8","192.0.2.9","198.51.100.20","203.0.113.24","::1","fc00::123","2001:db8::1","::ffff:8.8.8.8"})

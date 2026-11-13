@@ -62,3 +62,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 
 - Clear transient plaintext/verification byte arrays after encrypted report save and verification, including failures; the immutable managed report string still cannot be guaranteed erased.
 - Disallow selecting an existing encrypted-folder backup filename before beginning a new backup, matching the established no-overwrite policy.
+
+## 2026-11-13 — fail-closed signed-package staging verification
+
+- Reject unsigned sidecar payloads, hidden files and nested directories in a purportedly signed staging folder. Strengthened Windows filename and reserved-device validation.
+- Validate artifact size from the opened file stream and enforce exact signed-file inventory cardinality; add malicious extra-file/folder and reserved-path tests.
+- Signing identity, authenticated update distribution, execution and rollback remain release blockers; this is not a completed automatic updater.

@@ -58,6 +58,8 @@ public static class TrustedArtifacts
         for (var ancestor = new DirectoryInfo(root); ancestor != null; ancestor = ancestor.Parent)
             if ((ancestor.Attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Reparse point in signed staging path");
+        // Signed inventory must be exact. An unlisted DLL, script or nested folder
+        // in the staging directory is NOT trusted by this manifest.
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long cumulativeBytes = 0;
         foreach (var entry in manifest.Files)
@@ -65,7 +67,10 @@ public static class TrustedArtifacts
             if (entry.Name is null || entry.Name.Length is < 1 or > 128 ||
                 entry.Name is "." or ".." || Path.GetFileName(entry.Name) != entry.Name ||
                 entry.Name.Contains('/') || entry.Name.Contains('\\') ||
-                entry.Name.Contains(':') || !seen.Add(entry.Name) ||
+                entry.Name.Contains(':') || entry.Name != entry.Name.Trim() ||
+                entry.Name.EndsWith('.') || entry.Name.Any(c => c < 32 ||
+                    c is '<' or '>' or '"' or '|' or '?' or '*') ||
+                IsReservedWindowsFilename(entry.Name) || !seen.Add(entry.Name) ||
                 entry.Length is < 1 or > 256 * 1024 * 1024 ||
                 entry.Sha256 is null || entry.Sha256.Length != 64)
                 throw new InvalidDataException("Unsafe signed file inventory");
@@ -77,14 +82,45 @@ public static class TrustedArtifacts
             catch (FormatException ex) { throw new InvalidDataException("Malformed signed digest", ex); }
             var path = Path.Combine(root, entry.Name);
             var file = new FileInfo(path);
-            if (!file.Exists || (file.Attributes & FileAttributes.ReparsePoint) != 0 || file.Length != entry.Length)
-                throw new InvalidDataException("Missing, linked, or mismatched signed file");
+            if (!file.Exists || (file.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Missing or linked signed file");
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
                 65536, FileOptions.SequentialScan);
+            // Verify the size on the opened stream rather than a separate stat.
+            if (stream.Length != entry.Length)
+                throw new InvalidDataException("Signed file size mismatch");
             var actual = SHA256.HashData(stream);
             if (!CryptographicOperations.FixedTimeEquals(actual, expected))
                 throw new CryptographicException("Staged file hash rejected");
         }
+        int encountered = 0;
+        foreach (var child in Directory.EnumerateFileSystemEntries(root))
+        {
+            var name = Path.GetFileName(child);
+            if (!seen.Contains(name))
+                throw new InvalidDataException("Unlisted file or directory in signed staging area");
+            var file = new FileInfo(child);
+            if (!file.Exists || (file.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Untrusted staged artifact type");
+            encountered++;
+        }
+        if (encountered != seen.Count)
+            throw new InvalidDataException("Signed file inventory does not match staging directory");
         return manifest;
+    }
+
+    private static bool IsReservedWindowsFilename(string name)
+    {
+        var stem = name.Split('.')[0];
+        return stem.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase) ||
+            (stem.Length == 4 &&
+             (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
+              stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) &&
+             stem[3] >= '1' && stem[3] <= '9');
     }
 }
