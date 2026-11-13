@@ -409,7 +409,7 @@ public sealed class LayerChecks : IDisposable
                         }
                     }
                 }
-                catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Security.Cryptography.CryptographicException)
+                catch(Exception ex)when(ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException)
                 {
                     return Missing(id,"Persistent binary integrity inventory unavailable or unsafe: "+Wire.Clean(ex.Message,120));
                 }

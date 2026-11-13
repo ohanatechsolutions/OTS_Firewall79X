@@ -86,3 +86,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Layer 35 now maintains protected local SHA-256 observations for OTS assemblies and a small set of core Windows binaries across service restarts. Changes yield an explicit warning; corrupt or linked baseline state is not automatically reset.
 - Checks actual file-stream size before hashing and declines linked files/ancestors; caps stored observations and serialized data. A baseline learned on first observation is NOT a trusted publisher signature or proof a binary was originally clean.
 - Regression tests cover first observation, unchanged hashes, changed hash after reloading and rejection of a corrupt saved state.
+
+## 2026-11-13 — rollback-safe authentication windows and fail-closed corrupt integrity state
+
+- Reset one source's stale attempted-logon window if the host clock goes backward, preserving warning and opt-in restriction cooldowns so old attempts cannot appear as a new burst.
+- Handle malformed persistent binary-integrity JSON as an unavailable audit rather than crashing an entire runtime check cycle or silently replacing damaged evidence.
+- Add time-rollback regression tests.

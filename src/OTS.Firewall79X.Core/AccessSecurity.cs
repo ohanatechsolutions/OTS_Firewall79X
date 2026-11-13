@@ -21,6 +21,7 @@ public sealed class AuthenticationFailureMonitor
         public Queue<(DateTimeOffset At,string? InvalidAccountTag)> Attempts { get; } = new();
         public DateTimeOffset LastAlert { get; set; } = DateTimeOffset.MinValue;
         public DateTimeOffset LastRestrictionCandidate { get; set; } = DateTimeOffset.MinValue;
+        public DateTimeOffset LastObserved { get; set; } = DateTimeOffset.MinValue;
     }
     private readonly Dictionary<string,Window> sources = new(StringComparer.Ordinal);
     private readonly TimeSpan period = TimeSpan.FromMinutes(2);
@@ -44,6 +45,15 @@ public sealed class AuthenticationFailureMonitor
             if (sources.Count>=2048)sources.Remove(sources.Keys.First()); // bounded memory, never claim coverage for evicted sources
         }
         if (!sources.TryGetValue(source,out var window))sources[source]=window=new Window();
+        if (now<window.LastObserved)
+        {
+            // A host clock rollback or out-of-order event must never turn old
+            // attempts into a fresh burst or bypass restriction cooldown.
+            window.Attempts.Clear();
+            window.LastAlert=now;
+            window.LastRestrictionCandidate=now;
+        }
+        window.LastObserved=now;
         while (window.Attempts.Count>0&&window.Attempts.Peek().At<=now-period)window.Attempts.Dequeue();
         // Only Windows STATUS_NO_SUCH_USER (not a mistyped password for a valid account)
         // can contribute toward the optional RDP-only restriction threshold.

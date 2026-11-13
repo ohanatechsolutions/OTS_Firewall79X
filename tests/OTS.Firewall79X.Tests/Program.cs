@@ -436,6 +436,20 @@ Test("Section G: trusted signed update rejects tampering, downgrade, expiry, and
     Throws<InvalidDataException>(()=>
         TrustedArtifacts.Verify(envelope,[],folder,new Version(1,0),now));
 });
+Test("Remote authentication monitoring resets old source windows after host clock rollback",()=>{
+    var now=DateTimeOffset.UtcNow;
+    var monitor=new AuthenticationFailureMonitor();
+    AuthenticationFailureMonitor.Finding finding=new(false,false,0,"","");
+    for(int i=0;i<8;i++)
+        finding=monitor.Observe("8.8.8.8","10",now.AddHours(1).AddSeconds(i));
+    Assert(finding.Alert);
+    // The first post-rollback attempt starts a new window, not an inherited burst.
+    var back=monitor.Observe("8.8.8.8","10",now);
+    Assert(back.Count==1&&!back.Alert&&!back.RestrictionCandidate);
+    for(int i=0;i<40;i++)
+        finding=monitor.Observe("8.8.8.8","10",now.AddSeconds(i+1),"0xC0000064","missing"+(i%5));
+    Assert(!finding.RestrictionCandidate,"Clock rollback must not immediately bypass the 10-minute restriction cooldown");
+});
 Test("Threat feed publication floor accepts only fresh, monotonic UTC timestamps across instances",()=>{
     var directory=Path.GetDirectoryName(Temp())!;Directory.CreateDirectory(directory);
     var path=Path.Combine(directory,"publication-floor.txt");
