@@ -39,7 +39,8 @@ public static class OsvBatchValidator
                     throw new InvalidDataException("OSV pagination token is not a string");
                 token = continuation.GetString();
                 if (token is { Length: > 0 } && (token.Length > 4096 ||
-                    token.Any(c => c < '!' || c > '~')))
+                    token.Any(c => !char.IsAsciiLetterOrDigit(c) &&
+                        c is not ('+' or '/' or '=' or '-' or '_'))))
                     throw new InvalidDataException("OSV pagination token is oversized or contains control characters");
                 if (string.IsNullOrEmpty(token)) token = null;
             }
