@@ -46,3 +46,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Read encrypted archives from a single size-checked open stream, rejecting size changes instead of trusting a separate pre-read file stat.
 - Best-effort clearing of internal encryption/ciphertext/key buffers and partial plaintext when authentication fails, without mutating caller-owned input buffers.
 - Wipe temporary plaintext backup ZIP buffers after encryption/verification; add regression tests for caller-buffer preservation and invalid archive sizes.
+
+## 2026-11-13 — selected-folder backups retain empty directories
+
+- Introduced backward-compatible authenticated directory markers so encrypted folder versions restore empty nested directories, not only files.
+- Enforced independent 5,000-file/5,000-directory ceilings, canonical relative paths, no-symlink restore paths, zero-length directory markers and no-overwrite restoration.
+- Added a nested empty-directory backup, verification, restore and non-overwrite regression.

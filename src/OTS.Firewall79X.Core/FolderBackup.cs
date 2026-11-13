@@ -6,7 +6,8 @@ namespace OTS.Firewall79X.Core;
 public static class FolderBackup
 {
     public const long MaxBytes=60L*1024*1024;
-    private sealed record Entry(string Path,long Length,string Sha256,long? LastWriteUtcTicks=null);
+    private sealed record Entry(string Path,long Length,string Sha256,long? LastWriteUtcTicks=null,bool IsDirectory=false);
+    private static readonly string EmptySha256=Convert.ToHexString(SHA256.HashData(Array.Empty<byte>()));
     public sealed record Summary(int Files,long Bytes);
     private static void NoLink(string path)
     {
@@ -31,20 +32,29 @@ public static class FolderBackup
         var entries=new List<Entry>();long total=0;using var payload=new MemoryStream();
         using(var zip=new ZipArchive(payload,ZipArchiveMode.Create,true))
         {
-            var directories=new Stack<string>();directories.Push(source);int visited=0;
+            var directories=new Stack<string>();directories.Push(source);int visited=0,fileCount=0;
             while(directories.Count>0)
             {
                 var dir=directories.Pop();if(++visited>5000)throw new IOException("Directory budget exceeded");NoLink(dir);
+                if(!string.Equals(dir,source,StringComparison.OrdinalIgnoreCase))
+                {
+                    // Store directory markers, including empty subdirectories. Previous
+                    // archives contain only file entries and remain readable.
+                    var relativeDir=ValidatePath(Path.GetRelativePath(source,dir).Replace(Path.DirectorySeparatorChar,'/'));
+                    zip.CreateEntry("directories/"+relativeDir+"/",CompressionLevel.NoCompression);
+                    entries.Add(new(relativeDir,0,EmptySha256,null,true));
+                }
                 foreach(var child in Directory.EnumerateDirectories(dir)){if(directories.Count>=5000)throw new IOException("Directory budget exceeded");NoLink(child);directories.Push(child);}
                 foreach(var file in Directory.EnumerateFiles(dir))
                 {
                     var info=new FileInfo(file);if(info.Attributes.HasFlag(FileAttributes.ReparsePoint))throw new IOException("Linked files are not accepted");
-                    if(entries.Count>=5000||info.Length>MaxBytes-total)throw new IOException("Backup exceeds 5,000 files or 60 MiB; choose a smaller folder");
+                    if(fileCount>=5000||info.Length>MaxBytes-total)throw new IOException("Backup exceeds 5,000 files or 60 MiB; choose a smaller folder");
                     var relative=ValidatePath(Path.GetRelativePath(source,file).Replace(Path.DirectorySeparatorChar,'/'));
                     using var input=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.Read);using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                     var entry=zip.CreateEntry("files/"+relative,CompressionLevel.Fastest);long length=0;var buffer=new byte[65536];
                     using(var output=entry.Open()){int n;while((n=input.Read(buffer))>0){if(total+n>MaxBytes)throw new IOException("Backup grew beyond budget");output.Write(buffer,0,n);hash.AppendData(buffer,0,n);length+=n;total+=n;}}
                     entries.Add(new(relative,length,Convert.ToHexString(hash.GetHashAndReset()),info.LastWriteTimeUtc.Ticks));
+                    fileCount++;
                 }
             }
             using var manifest=zip.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(manifest,entries,Wire.Json);
@@ -84,7 +94,7 @@ public static class FolderBackup
         try
         {
             using var payload=new MemoryStream(bytes,false);using var zip=new ZipArchive(payload,ZipArchiveMode.Read);
-            if(zip.Entries.Count>5001)throw new InvalidDataException("Entry budget exceeded");
+            if(zip.Entries.Count>10001)throw new InvalidDataException("Entry budget exceeded");
             var manifest=zip.GetEntry("manifest.json")??throw new InvalidDataException("Backup manifest missing");if(manifest.Length>2*1024*1024)throw new InvalidDataException("Manifest too large");
             List<Entry> entries;
             using(var input=manifest.Open())using(var limited=new MemoryStream())
@@ -93,11 +103,34 @@ public static class FolderBackup
                 entries=JsonSerializer.Deserialize<List<Entry>>(limited.ToArray(),Wire.Json)??throw new InvalidDataException("Invalid manifest");
             }
             if(zip.Entries.Select(e=>e.FullName).Distinct(StringComparer.OrdinalIgnoreCase).Count()!=zip.Entries.Count)throw new InvalidDataException("Duplicate archive entry names");
-            if(entries.Count>5000||zip.Entries.Count!=entries.Count+1)throw new InvalidDataException("Entry count mismatch");
-            var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);long total=0;
+            if(entries.Count>10000||zip.Entries.Count!=entries.Count+1)throw new InvalidDataException("Entry count mismatch");
+            var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);long total=0;int files=0,folders=0;
             foreach(var item in entries)
             {
-                string name=ValidatePath(item.Path);if(!names.Add(name)||item.Length<0||item.Length>MaxBytes-total)throw new InvalidDataException("Invalid or duplicate entry");
+                string name=ValidatePath(item.Path);
+                if(!names.Add(name))throw new InvalidDataException("Invalid or duplicate entry path");
+                if(item.IsDirectory)
+                {
+                    if(++folders>5000||item.Length!=0||item.LastWriteUtcTicks!=null||
+                       item.Sha256!=EmptySha256)
+                        throw new InvalidDataException("Invalid directory metadata");
+                    var directoryEntry=zip.GetEntry("directories/"+name+"/")??
+                        throw new InvalidDataException("Missing directory marker");
+                    if(directoryEntry.Length!=0)throw new InvalidDataException("Directory marker is not empty");
+                    if(destination!=null)
+                    {
+                        var target=Path.GetFullPath(Path.Combine(destination,name.Replace('/',Path.DirectorySeparatorChar)));
+                        if(!target.StartsWith(destination+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("Archive directory escapes destination");
+                        NoLink(Path.GetDirectoryName(target)!);
+                        if(File.Exists(target))throw new InvalidDataException("Archive directory conflicts with file");
+                        Directory.CreateDirectory(target);
+                        NoLink(target);
+                    }
+                    continue;
+                }
+                if(++files>5000||item.Length<0||item.Length>MaxBytes-total)
+                    throw new InvalidDataException("Invalid file entry size or count");
                 var entry=zip.GetEntry("files/"+name)??throw new InvalidDataException("Missing file");if(entry.Length!=item.Length)throw new InvalidDataException("Length mismatch");
                 FileStream? output=null;string? outputPath=null;
                 try
@@ -115,7 +148,7 @@ public static class FolderBackup
                     File.SetLastWriteTimeUtc(outputPath,new DateTime(ticks,DateTimeKind.Utc));
                 }
             }
-            return new(entries.Count,total);
+            return new(files,total);
         }
         finally{CryptographicOperations.ZeroMemory(bytes);}
     }
