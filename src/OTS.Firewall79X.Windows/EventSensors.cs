@@ -111,11 +111,14 @@ public sealed class EventSensors : IDisposable
                             {
                                 events.Add(41,"High","Repeated remote authentication failures",
                                     $"{failure.Count} observed network/remote-interactive failures from {failure.Source} within two minutes; an alert is not proof of an attack.");
-                            if(failure.RestrictionCandidate)
-                                networkGuard?.ObserveAuthenticationAttack(failure.Source,now);
                                 events.Add(15,"Warning","Authentication attack-pattern hypothesis",
                                     $"{failure.Count} verified remote failures; {TrafficRules.MitreTechnique("repeated-logon-failures")}. Authentication attempts are not proof of compromise.");
                             }
+                            // A distinct 32-failure restriction threshold can be reached
+                            // during the separate five-minute 8-failure alert cooldown.
+                            // Never gate opt-in RDP protection on alert notification timing.
+                            if(failure.RestrictionCandidate)
+                                networkGuard?.ObserveAuthenticationAttack(failure.Source,now);
                         }
                     }
                     break;

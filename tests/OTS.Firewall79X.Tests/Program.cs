@@ -15,6 +15,7 @@ Test("Section E optional RDP restrictions require strong nonexistent-user eviden
     Assert(!finding.RestrictionCandidate,"31 is below the block threshold");
     finding=monitor.Observe("8.8.8.8","10",now.AddSeconds(31),"0xC0000064","absent0");
     Assert(finding.RestrictionCandidate,"32 missing-user attempts across five identities must qualify");
+    Assert(!finding.Alert,"32-failure restriction can occur during 8-failure alert cooldown; handler must evaluate separately");
     Assert(!monitor.Observe("8.8.8.8","10",now.AddSeconds(32),"0xC0000064","absent1").RestrictionCandidate,"Cooldown must reject immediate repeat");
     var validAccount=new AuthenticationFailureMonitor();
     for(int i=0;i<60;i++)finding=validAccount.Observe("1.1.1.1","10",now.AddSeconds(i),"0xC000006A","realuser");

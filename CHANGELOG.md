@@ -74,3 +74,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Persist a per-feed UTC publication high-water mark under protected OTS service data. A newly downloaded, even still-fresh, Feodo or URLhaus-derived snapshot cannot replace a newer accepted publication after a service restart.
 - Reject malformed/linked state files and stale/future timestamps; preserve a fail-closed state on storage or parsing errors. Separate 24h (Feodo) and 12h (domain mirror) freshness windows.
 - Add core regressions for newer, equal, older, stale, future and corrupted publications. This is anti-replay defense in depth, **not publisher signature authentication**.
+
+## 2026-11-13 — independent optional RDP restriction decision
+
+- Fixed event-handler gating that accidentally nested the high-confidence Layer 41 RDP restriction inside a different eight-failure notification cooldown. Reaching 32 nonexistent-account RDP failures now evaluates the independently authorized temporary rule even when the notification is suppressed.
+- Retains explicit administrator opt-in, distinct-name requirement, trusted-address exclusions, exact TCP 3389 rule, short expiry and no blocking on ordinary wrong-password events.
+- Added regression confirming a valid restriction candidate may coincide with a suppressed low-threshold alert. Windows end-to-end live 4625 rule installation/rollback remains a physical acceptance requirement.
