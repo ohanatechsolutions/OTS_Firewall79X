@@ -1,5 +1,18 @@
 # Test status
 
+## Latest verified CI evidence — November 13, 2026
+
+**PASS: commit `5f4a4d2f3c7bb9638a0d2f20f8e42c1a7c6e2a3e`** on Windows Server 2025 CI: [Windows build and installation verification, run 43419857452](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43419857452).
+
+- **114/114 core regression tests passed**, including new OSV batch-pagination validation, secure archive/backup memory hardening, legacy file-only archive compatibility, bounded empty-directory backup restore, hostile directory-path rejection, clock rollback behavior, and Windows dotted IPv4-mask overlap analysis.
+- **PASS:** application/service/recovery compilation, UI checks, Windows integration/privilege boundary probes, clean install, ON/OFF/restore, watchdog outage detection, in-place upgrade, uninstall and firewall-rule preservation.
+- **PASS:** dependency vulnerability inventory and release finalization gates; real installer/ZIP size, PE format, matching SHA-256 and packaged `installer/` contents.
+- Verified unsigned installer in that run: **118,221,526 bytes**; SHA-256 `2e0941e34c8ffa09f44e18d72ebc3395784a10dcea9c0cf0436cc7bc4fe04f7d`. This hash identifies **only the run's generated artifact**, not a trusted publisher, and does not match earlier prereleases.
+- GitHub Actions job artifacts are short-lived. **No new GitHub Release was published by this push**: publishing is explicit/manual and now gated on the separate full-history secret-pattern scan, whose previous runs recorded unresolved potential findings.
+
+**Release classification remains INCOMPLETE DEVELOPMENT PREVIEW.** This CI run does NOT establish physical Windows 10/11 Home compatibility, 79/79 full defense coverage, full kernel/WFP packet prevention, independent security efficacy, signed trusted update delivery, or a completed production acceptance gate. Keep Windows Firewall and Microsoft Defender enabled.
+
+
 ## Executed evidence
 
 - **PASS:** all application, service, recovery, core and Windows adapter projects compile using .NET SDK 10.0.403; latest local build has zero warnings/errors.

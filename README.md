@@ -2,7 +2,9 @@
 
 Native Windows desktop security application by **Ohana Tech Solutions**.
 
-**Status: incomplete development preview, version 0.1.0. Not a production security release.** The original [79-layer specification](docs/BUILD_SPECIFICATION.md) remains the acceptance target. [Coverage and gaps](LAYER_COVERAGE.md) distinguish limited implementations from missing capabilities. No claim is made that all 79 layers are complete.
+**Status: incomplete development preview, version 0.1.0. Not a production security release.**
+
+**Development update (November 13, 2026):** [Latest Windows CI passed 114/114 core tests and installer verification](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43419857452). Improvements include bounded OSV advisory pagination, encrypted-backup empty-directory restore and verification, and additional network/security parser checks. **These commits have not been published as a new installer Release Asset**, because explicit manual publication remains gated on historical secret-pattern review. See [test evidence](TEST_RESULTS.md), [honest layer coverage](LAYER_COVERAGE.md), and [owner handoff](docs/RELEASE_OWNER_ACTIONS.md). The original [79-layer specification](docs/BUILD_SPECIFICATION.md) remains the acceptance target. [Coverage and gaps](LAYER_COVERAGE.md) distinguish limited implementations from missing capabilities. No claim is made that all 79 layers are complete.
 
 ## Install and use
 

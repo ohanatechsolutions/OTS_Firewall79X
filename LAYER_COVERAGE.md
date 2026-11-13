@@ -1,5 +1,18 @@
 # 79-layer requirement coverage
 
+## Verified development improvements — November 13, 2026
+
+The [successful Windows CI run 43419857452](https://github.com/ohanatechsolutions/OTS_Firewall79X/actions/runs/43419857452) passed **114/114 core regressions**, Windows integration smoke tests and installer/ZIP checks for commit `5f4a4d2`. Narrow improvements include:
+
+- **52 — Updates/vulnerabilities:** opt-in OSV NuGet exact-version queries now follow bounded per-package pagination and deduplicate advisory IDs, failing incomplete instead of reporting false safety.
+- **68 — Encrypted folder backups:** restore includes empty subdirectories with path checks and legacy file-only archive compatibility; temporary plaintext buffers receive best-effort erasure. Still **not** system imaging or ACL/link-preserving backup.
+- **73 — Firewall policy comparison:** continuous dotted IPv4 netmasks used by Windows Firewall COM are now recognized in read-only overlap hints. This does not prove effective WFP/GPO precedence.
+- **78 — Ransomware signals:** detection history can recover from clock rollback while preserving alert cooldown. This is observation only, not proven malware prevention.
+- Security/privacy regressions also harden GUI encrypted-report byte cleanup and existing backup overwrite prompts.
+
+**These changes do not mark any individual layer fully implemented or production certified.** Full original requirements, physical Windows 10/11 validation and independently reviewed detection efficacy are still outstanding. The previous historic publication secret-pattern scan failures remain release blockers; no signed/current public release is claimed.
+
+
 **No layer is certified as fully implemented and tested against the complete specification.** A working limited feature is not full completion. Runtime health describes only its declared mechanism. All original requirements remain scope.
 
 | ID | Layer | Implementation file | Mode | Requirement status | Tests | Limitations |
