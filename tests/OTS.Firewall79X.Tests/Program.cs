@@ -168,6 +168,17 @@ Test("OSV strict pagination parsing rejects malicious tokens and response types"
 Test("Secrets scanner emits indicator type only",()=>{Assert(Detections.SecretKind("ordinary text")==null);Assert(Detections.SecretKind("-----BEGIN PRIVATE KEY-----\nsecret") == "Private key");});
 Test("Report includes all layers and literal limitations",()=>{var layers=Catalog.All.Select(l=>new LayerResult(l.Id,LayerMode.Unavailable,false,"Not implemented","A | B")).ToList();var d=new Dashboard(false,"Not Protected",0,0,DateTimeOffset.UtcNow,null,layers,[],[],0,0,0,null,"none");var report=Reports.Generate(d);Assert(report.Contains("| 79 |")&&report.Contains("A \\| B"));});
 Test("Encrypted archive roundtrip and wrong-password rejection",()=>{var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);SecureArchive.Encrypt(path,"private report"u8.ToArray(),"twelve-chars-or-more");Assert(SecureArchive.Decrypt(path,"twelve-chars-or-more").AsSpan().SequenceEqual("private report"u8));Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(()=>SecureArchive.Decrypt(path,"wrong-password-here"));});
+Test("Encrypted report archive creation is atomic and never overwrites an existing version",()=>{
+    var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+    var original="sensitive original report"u8.ToArray();
+    SecureArchive.Encrypt(path,original,"twelve-chars-or-more");
+    var prior=File.ReadAllBytes(path);
+    Throws<IOException>(()=>SecureArchive.Encrypt(path,"malicious overwrite"u8.ToArray(),
+        "twelve-chars-or-more"));
+    Assert(File.ReadAllBytes(path).AsSpan().SequenceEqual(prior),"Original encrypted version was altered");
+    Assert(!Directory.EnumerateFiles(Path.GetDirectoryName(path)!,"*.partial").Any(),
+        "No temporary archive should be left after a successful transaction");
+});
 Test("Encrypted archive preserves caller bytes and rejects oversized or truncated files",()=>{
     var path=Temp();Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     byte[] source=System.Text.Encoding.UTF8.GetBytes("sensitive archive evidence");

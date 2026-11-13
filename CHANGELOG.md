@@ -92,3 +92,9 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Reset one source's stale attempted-logon window if the host clock goes backward, preserving warning and opt-in restriction cooldowns so old attempts cannot appear as a new burst.
 - Handle malformed persistent binary-integrity JSON as an unavailable audit rather than crashing an entire runtime check cycle or silently replacing damaged evidence.
 - Add time-rollback regression tests.
+
+## 2026-11-13 — atomic, non-overwriting encrypted archive creation
+
+- Changed core AES-GCM archive creation to write through a unique same-directory temporary file, flush, and move without overwriting. Failed commits remove only their own staging file and preserve any prior archive.
+- Aligned encrypted-report GUI save behavior with the same versioned no-overwrite policy.
+- Added regression proving an attempted overwrite preserves the original ciphertext and leaves no staging artifact.

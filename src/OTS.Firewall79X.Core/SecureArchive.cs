@@ -8,6 +8,9 @@ public static class SecureArchive
     {
         if(password.Length<12)throw new ArgumentException("Use at least 12 characters");
         if(payload.Length>64*1024*1024)throw new ArgumentException("Archive too large");
+        var target=Path.GetFullPath(destination);
+        if(File.Exists(target)||Directory.Exists(target))
+            throw new IOException("Encrypted archives are versioned and must never overwrite an existing file");
         byte[] salt=RandomNumberGenerator.GetBytes(16),nonce=RandomNumberGenerator.GetBytes(12),
             tag=new byte[16],cipher=new byte[payload.Length];
         var key=Rfc2898DeriveBytes.Pbkdf2(password,salt,600000,HashAlgorithmName.SHA256,32);
@@ -15,9 +18,21 @@ public static class SecureArchive
         {
             using var aes=new AesGcm(key,16);
             aes.Encrypt(nonce,payload,cipher,tag,"OTS1"u8);
-            using var f=File.Create(destination);
-            f.Write("OTS1"u8);f.Write(salt);f.Write(nonce);f.Write(tag);f.Write(cipher);
-            f.Flush(true);
+            var staging=target+"."+Guid.NewGuid().ToString("N")+".partial";
+            try
+            {
+                using(var f=new FileStream(staging,FileMode.CreateNew,FileAccess.Write,FileShare.None,
+                    65536,FileOptions.WriteThrough))
+                {
+                    f.Write("OTS1"u8);f.Write(salt);f.Write(nonce);f.Write(tag);f.Write(cipher);
+                    f.Flush(true);
+                }
+                File.Move(staging,target,false);
+            }
+            finally
+            {
+                if(File.Exists(staging))File.Delete(staging);
+            }
         }
         finally
         {

@@ -306,7 +306,9 @@ public partial class MainWindow : Window
     }
     private void ArchiveClick(object sender,RoutedEventArgs e)
     {
-        var report=Report();if(report==null)return;var save=new SaveFileDialog{Filter="Encrypted OTS archive|*.otsbackup",FileName=$"OTS-Report-{DateTime.Now:yyyyMMdd-HHmmss}.otsbackup"};if(save.ShowDialog()!=true)return;
+        var report=Report();if(report==null)return;var save=new SaveFileDialog{Filter="Encrypted OTS archive|*.otsbackup",FileName=$"OTS-Report-{DateTime.Now:yyyyMMdd-HHmmss}.otsbackup",OverwritePrompt=false};if(save.ShowDialog()!=true)return;
+        if(File.Exists(save.FileName)||Directory.Exists(save.FileName))
+        {MessageBox.Show("Encrypted report backups never overwrite an existing version. Choose a new filename.","Archive already exists",MessageBoxButton.OK,MessageBoxImage.Warning);return;}
         byte[]? cleartext=null,verified=null;
         try
         {
