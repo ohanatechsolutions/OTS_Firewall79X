@@ -820,6 +820,13 @@ Test("Section H range audit recognizes IPv4, IPv6 and port overlaps but not unkn
     Assert(report.PotentialOverlaps>0&&report.Examined==2);
     Assert(FirewallOverlap.Analyze(new[]{baseRule,match with{Profiles="0"}}).PotentialOverlaps==0);
 });
+Test("Firewall overlap recognizes contiguous Windows dotted IPv4 masks",()=>{
+    Assert(FirewallOverlap.AddressesOverlap("10.24.1.8/255.255.255.0","10.24.1.42/32"));
+    Assert(!FirewallOverlap.AddressesOverlap("10.24.1.8/255.255.255.0","10.24.2.42/32"));
+    Assert(FirewallOverlap.AddressesOverlap("10.24.1.8/255.255.255.255","10.24.1.8"));
+    Assert(!FirewallOverlap.AddressesOverlap("10.24.1.8/255.0.255.0","10.24.1.8"));
+    Assert(!FirewallOverlap.AddressesOverlap("2001:db8::1/255.255.255.0","2001:db8::1"));
+});
 Test("Section H encrypted export queue verifies data and preserves retry on failures",()=>{
     var root=Path.GetDirectoryName(Temp())!;var queue=Path.Combine(root,"queue");var receiver=Path.Combine(root,"receiver");
     Directory.CreateDirectory(root);Directory.CreateDirectory(receiver);

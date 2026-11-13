@@ -52,3 +52,8 @@ Initial native WPF application, Windows service, protected IPC, journaled AutoRu
 - Introduced backward-compatible authenticated directory markers so encrypted folder versions restore empty nested directories, not only files.
 - Enforced independent 5,000-file/5,000-directory ceilings, canonical relative paths, no-symlink restore paths, zero-length directory markers and no-overwrite restoration.
 - Added a nested empty-directory backup, verification, restore and non-overwrite regression.
+
+## 2026-11-13 — firewall-overlap analysis of Windows dotted IPv4 masks
+
+- Recognize contiguous dotted-decimal subnet masks emitted by Windows Firewall COM when checking potential rule overlaps; reject noncontiguous masks and cross-family comparisons.
+- Added positive, negative and malformed-mask regression checks. This is read-only analysis and does not establish actual WFP/GPO precedence.

@@ -51,3 +51,7 @@ A local administrative account can edit/delete data and its associated unkeyed S
 - Real removable drive, UNC credentials, SYSTEM service access, device removal, crash durability, storage quota, and malware tampering tests are not claimed by the Windows Server CI smoke runner. The local machine DPAPI store protects at rest but local administrators remain trusted. The user must keep the recovery passphrase separately.
 
 **Baseline operation does not require configuring a backup target or external service.** All optional jobs start disabled and have honest Idle/Unavailable states until configured and verified.
+
+### Dotted IPv4 netmask recognition (November 13, 2026)
+
+The conservative Rule 73 overlap helper now accepts both numeric CIDR lengths and contiguous dotted IPv4 subnet masks such as `255.255.255.0`, while rejecting noncontiguous masks. This improves analysis of native Windows Firewall COM serialized rules without attempting to calculate actual rule precedence or changing firewall policy. Automated parser tests cover representative masks; hardware/GPO/WFP acceptance remains outstanding.

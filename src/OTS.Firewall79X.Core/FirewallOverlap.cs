@@ -110,12 +110,45 @@ public static class FirewallOverlap
             var pair = token.Split('/');
             if (pair.Length is < 1 or > 2 || !IPAddress.TryParse(pair[0], out var ip)) return false;
             int bits = ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128;
-            if (pair.Length == 2 && (!int.TryParse(pair[1], out bits) || bits < 0 || bits > (ip.AddressFamily ==
-                System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128))) return false;
+            if (pair.Length == 2)
+            {
+                int maximum = ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128;
+                if (int.TryParse(pair[1], out var numeric))
+                {
+                    if (numeric < 0 || numeric > maximum) return false;
+                    bits = numeric;
+                }
+                else if (maximum == 32 && IPAddress.TryParse(pair[1], out var mask) &&
+                         mask.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                         TryContiguousIpv4Mask(mask, out var prefix))
+                    bits = prefix;
+                else return false;
+            }
             prefixes.Add(new(ip, bits));
         }
         return true;
     }
+    // Windows Firewall COM can serialize IPv4 CIDRs using dotted subnet masks
+    // rather than numeric prefix lengths. Reject non-contiguous masks; these
+    // are evidence hints only, never effective firewall-policy decisions.
+    private static bool TryContiguousIpv4Mask(IPAddress mask, out int prefix)
+    {
+        prefix=0;
+        bool sawZero=false;
+        foreach(var octet in mask.GetAddressBytes())
+            for(int shift=7;shift>=0;shift--)
+            {
+                bool set=(octet&(1<<shift))!=0;
+                if(set)
+                {
+                    if(sawZero)return false;
+                    prefix++;
+                }
+                else sawZero=true;
+            }
+        return true;
+    }
+
     private static bool PrefixOverlap(Prefix a, Prefix b)
     {
         var x = a.Address.GetAddressBytes(); var y = b.Address.GetAddressBytes();
